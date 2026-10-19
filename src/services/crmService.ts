@@ -29,7 +29,13 @@ import {
   CompanySettings,
   DashboardStats,
   LeadStage,
-  AttendanceStatus
+  AttendanceStatus,
+  AppNotification,
+  NotificationType,
+  AuditAction,
+  AuditTargetType,
+  AuditLogEntry,
+  ComprehensiveReportMetrics
 } from '../types/database';
 import {
   INITIAL_PROFILES,
@@ -48,7 +54,9 @@ import {
   INITIAL_POLICY_VERSIONS,
   INITIAL_POLICY_ACKS,
   INITIAL_HOLIDAYS,
-  INITIAL_SETTINGS
+  INITIAL_SETTINGS,
+  INITIAL_NOTIFICATIONS,
+  INITIAL_AUDIT_LOGS
 } from './mockData';
 
 // Storage Keys for reactive offline/demo persistence
@@ -89,6 +97,8 @@ class LocalCrmStore {
   private policyAcknowledgements: PolicyAcknowledgment[];
   private holidays: CompanyHoliday[];
   private settings: CompanySettings;
+  private notifications: AppNotification[];
+  private auditLogs: AuditLogEntry[];
 
   constructor() {
     this.profiles = getStorageItem('profiles', INITIAL_PROFILES);
@@ -108,6 +118,8 @@ class LocalCrmStore {
     this.policyAcknowledgements = getStorageItem('policy_acknowledgments', INITIAL_POLICY_ACKS);
     this.holidays = getStorageItem('holidays', INITIAL_HOLIDAYS);
     this.settings = getStorageItem('settings', INITIAL_SETTINGS);
+    this.notifications = getStorageItem('notifications', INITIAL_NOTIFICATIONS);
+    this.auditLogs = getStorageItem('audit_logs', INITIAL_AUDIT_LOGS);
   }
 
   private persist() {
@@ -128,6 +140,8 @@ class LocalCrmStore {
     setStorageItem('policy_acknowledgments', this.policyAcknowledgements);
     setStorageItem('holidays', this.holidays);
     setStorageItem('settings', this.settings);
+    setStorageItem('notifications', this.notifications);
+    setStorageItem('audit_logs', this.auditLogs);
   }
 
   resetState() {
@@ -148,7 +162,139 @@ class LocalCrmStore {
     this.policyAcknowledgements = JSON.parse(JSON.stringify(INITIAL_POLICY_ACKS));
     this.holidays = JSON.parse(JSON.stringify(INITIAL_HOLIDAYS));
     this.settings = JSON.parse(JSON.stringify(INITIAL_SETTINGS));
+    this.notifications = JSON.parse(JSON.stringify(INITIAL_NOTIFICATIONS));
+    this.auditLogs = JSON.parse(JSON.stringify(INITIAL_AUDIT_LOGS));
     this.persist();
+  }
+
+  // --- Audit Logs (Tamper-evident, immutable system ledger) ---
+  async recordAuditLog(entry: Omit<AuditLogEntry, 'id' | 'created_at'>): Promise<AuditLogEntry> {
+    const newEntry: AuditLogEntry = {
+      ...entry,
+      id: 'audit-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      created_at: new Date().toISOString()
+    };
+    this.auditLogs.unshift(newEntry);
+    this.persist();
+    return newEntry;
+  }
+
+  async getAuditLogs(
+    requestingUserId?: string,
+    filter?: {
+      actor_id?: string;
+      target_type?: AuditTargetType;
+      action?: AuditAction;
+      search?: string;
+      startDate?: string;
+      endDate?: string;
+    }
+  ): Promise<AuditLogEntry[]> {
+    let list = this.auditLogs;
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+      if (!isAdmin) {
+        // Restrict ordinary employees to logs involving themselves as actor or target
+        list = list.filter((a) => a.actor_id === requestingUserId || a.target_id === requestingUserId);
+      }
+    }
+
+    if (filter?.actor_id) {
+      list = list.filter((a) => a.actor_id === filter.actor_id);
+    }
+    if (filter?.target_type) {
+      list = list.filter((a) => a.target_type === filter.target_type);
+    }
+    if (filter?.action) {
+      list = list.filter((a) => a.action === filter.action);
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.actor_name.toLowerCase().includes(q) ||
+          a.target_name.toLowerCase().includes(q) ||
+          a.action.toLowerCase().includes(q) ||
+          a.actor_email.toLowerCase().includes(q)
+      );
+    }
+    if (filter?.startDate) {
+      list = list.filter((a) => a.created_at >= filter.startDate!);
+    }
+    if (filter?.endDate) {
+      list = list.filter((a) => a.created_at <= filter.endDate!);
+    }
+
+    return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  // --- Notifications (Isolated per user, realtime & persistence) ---
+  async getNotifications(
+    requestingUserId: string,
+    filter?: { unreadOnly?: boolean; type?: NotificationType }
+  ): Promise<AppNotification[]> {
+    // User isolation: users can ONLY access their own notifications!
+    let list = this.notifications.filter((n) => n.user_id === requestingUserId);
+    if (filter?.unreadOnly) {
+      list = list.filter((n) => !n.is_read);
+    }
+    if (filter?.type) {
+      list = list.filter((n) => n.type === filter.type);
+    }
+    return list
+      .map((n) => ({
+        ...n,
+        user: this.profiles.find((p) => p.id === n.user_id)
+      }))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  async getUnreadNotificationCount(requestingUserId: string): Promise<number> {
+    return this.notifications.filter((n) => n.user_id === requestingUserId && !n.is_read).length;
+  }
+
+  async markNotificationAsRead(notificationId: string, requestingUserId: string): Promise<AppNotification> {
+    const idx = this.notifications.findIndex((n) => n.id === notificationId && n.user_id === requestingUserId);
+    if (idx === -1) {
+      throw new Error('Notification not found or access denied: users cannot modify other users notifications.');
+    }
+    this.notifications[idx] = {
+      ...this.notifications[idx],
+      is_read: true,
+      read_at: new Date().toISOString()
+    };
+    this.persist();
+    return this.notifications[idx];
+  }
+
+  async markAllNotificationsAsRead(requestingUserId: string): Promise<{ count: number }> {
+    let count = 0;
+    const now = new Date().toISOString();
+    this.notifications = this.notifications.map((n) => {
+      if (n.user_id === requestingUserId && !n.is_read) {
+        count++;
+        return { ...n, is_read: true, read_at: now };
+      }
+      return n;
+    });
+    this.persist();
+    return { count };
+  }
+
+  async createNotification(
+    data: Omit<AppNotification, 'id' | 'created_at' | 'is_read' | 'read_at'>
+  ): Promise<AppNotification> {
+    const newNotif: AppNotification = {
+      ...data,
+      id: 'notif-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      is_read: false,
+      read_at: null,
+      created_at: new Date().toISOString()
+    };
+    this.notifications.unshift(newNotif);
+    this.persist();
+    return newNotif;
   }
 
   // --- Profiles / Employees ---
@@ -244,7 +390,21 @@ class LocalCrmStore {
     if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
       throw new Error('Unauthorized: Only an authorized administrator can provision employee accounts.');
     }
-    return this.createEmployee(data);
+    const newEmp = await this.createEmployee(data);
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: 'employee_created',
+      target_type: 'employee',
+      target_id: newEmp.id,
+      target_name: `${newEmp.name} (${newEmp.title || newEmp.role})`,
+      before_state: null,
+      after_state: { employee_id: newEmp.employee_id, role: newEmp.role, department: newEmp.department, status: newEmp.status },
+      metadata: { official_email: newEmp.email }
+    });
+    return newEmp;
   }
 
   async assignRole(
@@ -261,7 +421,22 @@ class LocalCrmStore {
     if (caller.id === targetUserId && caller.role !== 'founder_admin' && newRole === 'founder_admin') {
       throw new Error('Unauthorized: Only an existing founder administrator can grant founder privileges.');
     }
-    return this.updateEmployee(targetUserId, { role: newRole });
+    const beforeRole = target.role;
+    const updated = await this.updateEmployee(targetUserId, { role: newRole });
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: 'role_changed',
+      target_type: 'employee',
+      target_id: targetUserId,
+      target_name: target.name,
+      before_state: { role: beforeRole },
+      after_state: { role: newRole },
+      metadata: { department: target.department }
+    });
+    return updated;
   }
 
   async deactivateEmployee(
@@ -277,7 +452,22 @@ class LocalCrmStore {
     if (target.role === 'founder_admin') {
       throw new Error('Protected Account: The Founder / Head Admin account cannot be deactivated.');
     }
-    return this.updateEmployee(targetUserId, { status: 'deactivated' });
+    const beforeStatus = target.status;
+    const updated = await this.updateEmployee(targetUserId, { status: 'deactivated' });
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: 'employee_deactivated',
+      target_type: 'employee',
+      target_id: targetUserId,
+      target_name: target.name,
+      before_state: { status: beforeStatus },
+      after_state: { status: 'deactivated' },
+      metadata: { reason: 'Deactivated by administrator' }
+    });
+    return updated;
   }
 
   async updateProfile(
@@ -507,6 +697,9 @@ class LocalCrmStore {
     }
 
     const idx = this.attendance.findIndex((a) => a.user_id === record.user_id && a.date === record.date);
+    const beforeState = idx !== -1 ? { ...this.attendance[idx] } : null;
+    let finalRec: AttendanceRecord;
+
     if (idx !== -1) {
       this.attendance[idx] = {
         ...this.attendance[idx],
@@ -518,8 +711,7 @@ class LocalCrmStore {
         corrected_by: requestingUserId,
         corrected_at: new Date().toISOString()
       };
-      this.persist();
-      return this.attendance[idx];
+      finalRec = this.attendance[idx];
     } else {
       const newRec: AttendanceRecord = {
         id: 'att-' + Date.now().toString(36),
@@ -539,9 +731,33 @@ class LocalCrmStore {
         profile: this.profiles.find((p) => p.id === record.user_id)
       };
       this.attendance.unshift(newRec);
-      this.persist();
-      return newRec;
+      finalRec = newRec;
     }
+
+    // Record Audit Log
+    const targetEmp = this.profiles.find((p) => p.id === record.user_id);
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: 'attendance_regularized',
+      target_type: 'attendance',
+      target_id: finalRec.id,
+      target_name: `Timesheet Correction: ${targetEmp?.name || record.user_id} (${record.date})`,
+      before_state: beforeState,
+      after_state: {
+        date: finalRec.date,
+        clock_in: finalRec.clock_in,
+        clock_out: finalRec.clock_out,
+        status: finalRec.status,
+        total_hours: finalRec.total_hours
+      },
+      metadata: { correction_reason: reason }
+    });
+
+    this.persist();
+    return finalRec;
   }
 
   // --- Leaves ---
@@ -601,6 +817,23 @@ class LocalCrmStore {
       profile: this.profiles.find((p) => p.id === data.user_id)
     };
     this.leaves.unshift(newLeave);
+
+    // Notify administrators of incoming leave request
+    const applicant = this.profiles.find((p) => p.id === data.user_id);
+    const admins = this.profiles.filter((p) => (p.role === 'founder_admin' || p.role === 'admin') && p.status === 'active');
+    for (const admin of admins) {
+      if (admin.id !== data.user_id) {
+        await this.createNotification({
+          user_id: admin.id,
+          title: 'New Leave Request Pending Review',
+          message: `${applicant?.name || 'Employee'} submitted a ${calculatedDays}-day ${data.leave_type} leave request.`,
+          type: 'leave_applied',
+          link: '/leaves',
+          metadata: { leave_id: newLeave.id, applicant_id: data.user_id }
+        });
+      }
+    }
+
     this.persist();
     return newLeave;
   }
@@ -614,6 +847,7 @@ class LocalCrmStore {
     const idx = this.leaves.findIndex((l) => l.id === leaveId);
     if (idx === -1) throw new Error('Leave record not found');
     const leave = this.leaves[idx];
+    const beforeState = { ...leave };
 
     // CRITICAL SECURITY RULE: Employees and administrators cannot approve their own leave requests
     if (leave.user_id === reviewerId) {
@@ -648,6 +882,35 @@ class LocalCrmStore {
       reviewed_by: reviewerId,
       reviewed_at: new Date().toISOString()
     };
+
+    const applicant = this.profiles.find((p) => p.id === leave.user_id);
+
+    // Record Audit Log
+    const auditAction: AuditAction = status === 'approved' ? 'leave_approved' : 'leave_rejected';
+    await this.recordAuditLog({
+      actor_id: reviewerId,
+      actor_name: reviewer.name,
+      actor_email: reviewer.email,
+      actor_role: reviewer.role,
+      action: auditAction,
+      target_type: 'leave',
+      target_id: leaveId,
+      target_name: `${leave.leave_type.toUpperCase()} Leave (${applicant?.name || leave.user_id})`,
+      before_state: beforeState,
+      after_state: { ...this.leaves[idx] },
+      metadata: { days_count: leave.days_count, admin_remarks: remarks }
+    });
+
+    // Notify Applicant
+    await this.createNotification({
+      user_id: leave.user_id,
+      title: `Leave Request ${status === 'approved' ? 'Approved' : 'Rejected'}`,
+      message: `Your ${leave.days_count}-day ${leave.leave_type} leave request was ${status} by ${reviewer.name}.`,
+      type: 'leave_reviewed',
+      link: '/leaves',
+      metadata: { leave_id: leaveId, status }
+    });
+
     this.persist();
     return this.leaves[idx];
   }
@@ -656,6 +919,7 @@ class LocalCrmStore {
     const idx = this.leaves.findIndex((l) => l.id === leaveId);
     if (idx === -1) throw new Error('Leave record not found');
     const leave = this.leaves[idx];
+    const beforeState = { ...leave };
 
     const caller = this.profiles.find((p) => p.id === requestingUserId);
     const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
@@ -680,6 +944,24 @@ class LocalCrmStore {
     }
 
     this.leaves[idx].status = 'cancelled';
+
+    // Record Audit Log
+    if (caller) {
+      await this.recordAuditLog({
+        actor_id: requestingUserId,
+        actor_name: caller.name,
+        actor_email: caller.email,
+        actor_role: caller.role,
+        action: 'leave_cancelled',
+        target_type: 'leave',
+        target_id: leaveId,
+        target_name: `Cancelled ${leave.leave_type} leave`,
+        before_state: beforeState,
+        after_state: { ...this.leaves[idx] },
+        metadata: { days_count: leave.days_count }
+      });
+    }
+
     this.persist();
     return this.leaves[idx];
   }
@@ -761,6 +1043,23 @@ class LocalCrmStore {
       content: `Lead created in '${data.stage.toUpperCase()}' stage with estimated value of $${data.value.toLocaleString()}.`,
       created_at: new Date().toISOString()
     });
+
+    // Record Audit Log
+    const creator = this.profiles.find((p) => p.id === data.created_by);
+    await this.recordAuditLog({
+      actor_id: data.created_by || null,
+      actor_name: creator?.name || 'Admin',
+      actor_email: creator?.email || 'admin@vingo.com',
+      actor_role: creator?.role || 'founder_admin',
+      action: 'lead_created',
+      target_type: 'lead',
+      target_id: newLead.id,
+      target_name: newLead.company || newLead.title,
+      before_state: null,
+      after_state: { stage: newLead.stage, value: newLead.value, priority: newLead.priority },
+      metadata: { contact_name: newLead.contact_name }
+    });
+
     this.persist();
     return newLead;
   }
@@ -794,6 +1093,22 @@ class LocalCrmStore {
       created_at: new Date().toISOString()
     });
 
+    // Record Audit Log
+    const updater = this.profiles.find((p) => p.id === userId);
+    await this.recordAuditLog({
+      actor_id: userId,
+      actor_name: updater?.name || 'User',
+      actor_email: updater?.email || 'user@vingo.com',
+      actor_role: updater?.role || 'employee',
+      action: 'lead_status_changed',
+      target_type: 'lead',
+      target_id: id,
+      target_name: this.leads[idx].company || this.leads[idx].title,
+      before_state: { stage: oldStage },
+      after_state: { stage },
+      metadata: { previous_stage: oldStage, new_stage: stage }
+    });
+
     this.persist();
     return this.leads[idx];
   }
@@ -820,6 +1135,210 @@ class LocalCrmStore {
     this.persist();
     return newAct;
   }
+
+  // --- Lead Claim, Unlock, and Assignment with Realtime Notifications & Audit Logs ---
+  async claimDeadLead(leadId: string, claimingUserId: string): Promise<Lead> {
+    const idx = this.leads.findIndex((l) => l.id === leadId);
+    if (idx === -1) throw new Error('Lead not found');
+    const lead = this.leads[idx];
+    if (!lead.is_dead) {
+      throw new Error('Only dead or dormant leads can be claimed.');
+    }
+    if (lead.is_locked && lead.locked_by !== claimingUserId) {
+      throw new Error('Lead is currently locked by another sales representative.');
+    }
+    const claimer = this.profiles.find((p) => p.id === claimingUserId);
+    if (!claimer) throw new Error('User not found');
+
+    const beforeState = { ...lead };
+    const now = new Date().toISOString();
+    this.leads[idx] = {
+      ...lead,
+      is_dead: false,
+      is_locked: true,
+      locked_by: claimingUserId,
+      locked_at: now,
+      claimed_by: claimingUserId,
+      claimed_at: now,
+      assigned_to: claimingUserId,
+      updated_at: now
+    };
+
+    // Log Activity
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36),
+      lead_id: leadId,
+      user_id: claimingUserId,
+      activity_type: 'note',
+      title: 'Dead Lead Claimed',
+      content: `${claimer.name} claimed dormant opportunity ${lead.company} for active sales reactivation under exclusivity lock.`,
+      created_at: now,
+      user: claimer
+    });
+
+    // Record Audit Log
+    await this.recordAuditLog({
+      actor_id: claimingUserId,
+      actor_name: claimer.name,
+      actor_email: claimer.email,
+      actor_role: claimer.role,
+      action: 'lead_claimed',
+      target_type: 'lead',
+      target_id: leadId,
+      target_name: lead.company || lead.title,
+      before_state: beforeState,
+      after_state: { ...this.leads[idx] },
+      metadata: { reason: 'Representative claimed dormant lead for active reactivation' }
+    });
+
+    // Notify Founder/Admins
+    const admins = this.profiles.filter((p) => (p.role === 'founder_admin' || p.role === 'admin') && p.status === 'active');
+    for (const admin of admins) {
+      if (admin.id !== claimingUserId) {
+        await this.createNotification({
+          user_id: admin.id,
+          title: 'Dead Lead Claimed by Representative',
+          message: `${claimer.name} claimed dormant opportunity ${lead.company} ($${lead.value.toLocaleString()}) for active reactivation.`,
+          type: 'dead_lead_claimed',
+          link: '/leads',
+          metadata: { lead_id: leadId, claimed_by: claimingUserId }
+        });
+      }
+    }
+
+    this.persist();
+    return this.leads[idx];
+  }
+
+  async unlockDeadLead(leadId: string, requestingUserId: string): Promise<Lead> {
+    const idx = this.leads.findIndex((l) => l.id === leadId);
+    if (idx === -1) throw new Error('Lead not found');
+    const lead = this.leads[idx];
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller) throw new Error('User not found');
+
+    const isAdmin = caller.role === 'founder_admin' || caller.role === 'admin';
+    const isLocker = lead.locked_by === requestingUserId;
+
+    if (!isAdmin && !isLocker) {
+      throw new Error('Unauthorized: Only administrators or the locking representative can unlock this lead.');
+    }
+
+    const beforeState = { ...lead };
+    const now = new Date().toISOString();
+    this.leads[idx] = {
+      ...lead,
+      is_locked: false,
+      locked_by: null,
+      locked_at: null,
+      updated_at: now
+    };
+
+    // Record Audit Log (distinguish admin override vs standard unlock)
+    const auditAction: AuditAction = isAdmin && !isLocker ? 'admin_lock_override' : 'lead_unlocked';
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: auditAction,
+      target_type: 'lead',
+      target_id: leadId,
+      target_name: lead.company || lead.title,
+      before_state: beforeState,
+      after_state: { ...this.leads[idx] },
+      metadata: { isAdminOverride: isAdmin && !isLocker }
+    });
+
+    // If unlocked by admin, notify previous locker
+    if (isAdmin && !isLocker && beforeState.locked_by) {
+      await this.createNotification({
+        user_id: beforeState.locked_by,
+        title: 'Lead Exclusivity Lock Overridden by Admin',
+        message: `Administrator ${caller.name} removed your exclusivity lock on ${lead.company}.`,
+        type: 'dead_lead_unlocked',
+        link: '/leads',
+        metadata: { lead_id: leadId, unlocked_by: requestingUserId }
+      });
+    }
+
+    this.persist();
+    return this.leads[idx];
+  }
+
+  async assignLead(
+    leadId: string,
+    assigneeId: string | null,
+    requestingUserId: string
+  ): Promise<Lead> {
+    const idx = this.leads.findIndex((l) => l.id === leadId);
+    if (idx === -1) throw new Error('Lead not found');
+    const lead = this.leads[idx];
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller) throw new Error('User not found');
+
+    const isAdmin = caller.role === 'founder_admin' || caller.role === 'admin';
+    const beforeState = { ...lead };
+    const previousAssignee = lead.assigned_to;
+    const now = new Date().toISOString();
+
+    this.leads[idx] = {
+      ...lead,
+      assigned_to: assigneeId,
+      updated_at: now
+    };
+
+    const targetEmp = assigneeId ? this.profiles.find((p) => p.id === assigneeId) : null;
+
+    // Log Activity
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36),
+      lead_id: leadId,
+      user_id: requestingUserId,
+      activity_type: 'stage_change',
+      title: 'Lead Reassigned',
+      content: targetEmp
+        ? `Lead assigned to ${targetEmp.name} by ${caller.name}.`
+        : `Lead unassigned by ${caller.name}.`,
+      created_at: now,
+      user: caller
+    });
+
+    // Record Audit Log
+    await this.recordAuditLog({
+      actor_id: requestingUserId,
+      actor_name: caller.name,
+      actor_email: caller.email,
+      actor_role: caller.role,
+      action: 'lead_assigned',
+      target_type: 'lead',
+      target_id: leadId,
+      target_name: lead.company || lead.title,
+      before_state: beforeState,
+      after_state: { ...this.leads[idx] },
+      metadata: {
+        previous_assignee: previousAssignee,
+        new_assignee: assigneeId,
+        isAdminReassignment: isAdmin && previousAssignee !== null
+      }
+    });
+
+    // If assigned to another user, notify them!
+    if (assigneeId && assigneeId !== requestingUserId) {
+      await this.createNotification({
+        user_id: assigneeId,
+        title: 'New Lead Opportunity Assigned',
+        message: `${caller.name} assigned ${lead.company || lead.title} ($${lead.value.toLocaleString()}) to your sales pipeline.`,
+        type: 'lead_assigned',
+        link: '/leads',
+        metadata: { lead_id: leadId, assigned_by: requestingUserId }
+      });
+    }
+
+    this.persist();
+    return this.leads[idx];
+  }
+
 
   // --- Phase 05: Email Activity & Follow-ups Access & Helper Methods ---
   private checkLeadAccess(leadId: string, requestingUserId?: string): { lead: Lead; isAdmin: boolean } {
@@ -976,6 +1495,22 @@ class LocalCrmStore {
       }
     }
 
+    // Record Audit Log
+    const sender = this.profiles.find((p) => p.id === resolvedSender);
+    await this.recordAuditLog({
+      actor_id: resolvedSender,
+      actor_name: sender?.name || 'Sales Representative',
+      actor_email: sender?.email || data.recipient_email,
+      actor_role: sender?.role || 'employee',
+      action: 'email_logged',
+      target_type: 'email',
+      target_id: newLog.id,
+      target_name: `${data.subject} (${lead.company || lead.title})`,
+      before_state: null,
+      after_state: { recipient: data.recipient_email, subject: data.subject, reply_received: false },
+      metadata: { lead_id: data.lead_id }
+    });
+
     this.persist();
     return newLog;
   }
@@ -1049,6 +1584,35 @@ class LocalCrmStore {
         requestingUserId,
         true
       );
+    }
+
+    // Record Audit Log
+    const replier = this.profiles.find((p) => p.id === (requestingUserId || log.sender_user_id));
+    await this.recordAuditLog({
+      actor_id: requestingUserId || log.sender_user_id,
+      actor_name: replier?.name || 'Representative',
+      actor_email: replier?.email || 'sales@vingo.com',
+      actor_role: replier?.role || 'employee',
+      action: 'reply_recorded',
+      target_type: 'email',
+      target_id: log.id,
+      target_name: `Reply from ${log.recipient_email}: [${replyData.reply_category}]`,
+      before_state: { reply_received: false },
+      after_state: { reply_received: true, reply_category: replyData.reply_category },
+      metadata: { lead_id: log.lead_id, reply_category: replyData.reply_category }
+    });
+
+    // Notify lead owner / sender
+    const ownerId = lead.assigned_to || log.sender_user_id;
+    if (ownerId) {
+      await this.createNotification({
+        user_id: ownerId,
+        title: `Buyer Reply Recorded — ${replyData.reply_category}`,
+        message: `${log.recipient_email} (${lead.company || lead.title}) replied with category [${replyData.reply_category}].`,
+        type: 'reply_recorded',
+        link: '/email/replies',
+        metadata: { lead_id: log.lead_id, email_log_id: log.id, reply_category: replyData.reply_category }
+      });
     }
 
     this.persist();
@@ -1630,6 +2194,40 @@ class LocalCrmStore {
     };
 
     this.announcements.unshift(newNotice);
+
+    // Record Audit Log
+    const creator = this.profiles.find((p) => p.id === (requestingUserId || data.created_by));
+    await this.recordAuditLog({
+      actor_id: requestingUserId || data.created_by,
+      actor_name: creator?.name || 'Administrator',
+      actor_email: creator?.email || 'admin@vingo.com',
+      actor_role: creator?.role || 'founder_admin',
+      action: newNotice.status === 'published' ? 'notice_published' : 'notice_scheduled',
+      target_type: 'notice',
+      target_id: newNotice.id,
+      target_name: newNotice.title,
+      before_state: null,
+      after_state: { priority: newNotice.priority, status: newNotice.status, published_at: newNotice.published_at },
+      metadata: { requires_acknowledgement: newNotice.requires_acknowledgement }
+    });
+
+    // Notify all active employees if published
+    if (newNotice.status === 'published') {
+      const activeEmps = this.profiles.filter((p) => p.status === 'active');
+      for (const emp of activeEmps) {
+        if (emp.id !== (requestingUserId || data.created_by)) {
+          await this.createNotification({
+            user_id: emp.id,
+            title: `Important Notice: ${newNotice.title}`,
+            message: `${creator?.name || 'Leadership'} published an announcement: "${newNotice.title}".`,
+            type: 'notice_published',
+            link: '/announcements',
+            metadata: { notice_id: newNotice.id, priority: newNotice.priority }
+          });
+        }
+      }
+    }
+
     this.persist();
     return newNotice;
   }
@@ -1878,6 +2476,40 @@ class LocalCrmStore {
     };
 
     this.policies.push(newPol);
+
+    // Record Audit Log
+    const creator = this.profiles.find((p) => p.id === (requestingUserId || data.created_by));
+    await this.recordAuditLog({
+      actor_id: requestingUserId || data.created_by,
+      actor_name: creator?.name || 'Administrator',
+      actor_email: creator?.email || 'admin@vingo.com',
+      actor_role: creator?.role || 'founder_admin',
+      action: 'policy_published',
+      target_type: 'policy',
+      target_id: newPol.id,
+      target_name: `${newPol.title} (v${newPol.version})`,
+      before_state: null,
+      after_state: { version: newPol.version, status: newPol.status, category: newPol.category },
+      metadata: { summary: newPol.summary }
+    });
+
+    // Notify all active employees if published
+    if (newPol.status === 'published') {
+      const activeEmps = this.profiles.filter((p) => p.status === 'active');
+      for (const emp of activeEmps) {
+        if (emp.id !== (requestingUserId || data.created_by)) {
+          await this.createNotification({
+            user_id: emp.id,
+            title: `Company Policy Published: ${newPol.title}`,
+            message: `Version ${newPol.version} of policy "${newPol.title}" has been published and is now active.`,
+            type: 'policy_updated',
+            link: '/policies',
+            metadata: { policy_id: newPol.id, version: newPol.version }
+          });
+        }
+      }
+    }
+
     this.persist();
     return newPol;
   }
@@ -1930,6 +2562,39 @@ class LocalCrmStore {
     };
 
     this.policies[idx] = updatedPol;
+
+    // Record Audit Log
+    const updater = this.profiles.find((p) => p.id === requestingUserId);
+    await this.recordAuditLog({
+      actor_id: requestingUserId || null,
+      actor_name: updater?.name || 'Administrator',
+      actor_email: updater?.email || 'admin@vingo.com',
+      actor_role: updater?.role || 'founder_admin',
+      action: 'policy_updated',
+      target_type: 'policy',
+      target_id: id,
+      target_name: `${updatedPol.title} (v${updatedPol.version})`,
+      before_state: { version: current.version, status: current.status },
+      after_state: { version: updatedPol.version, status: updatedPol.status },
+      metadata: { change_summary: updates.change_summary || 'Policy revised' }
+    });
+
+    if (isVersionBump && updatedPol.status === 'published') {
+      const activeEmps = this.profiles.filter((p) => p.status === 'active');
+      for (const emp of activeEmps) {
+        if (emp.id !== requestingUserId) {
+          await this.createNotification({
+            user_id: emp.id,
+            title: `Policy Updated: ${updatedPol.title}`,
+            message: `New version ${updatedPol.version} was published. Please review and acknowledge.`,
+            type: 'policy_updated',
+            link: '/policies',
+            metadata: { policy_id: updatedPol.id, version: updatedPol.version }
+          });
+        }
+      }
+    }
+
     this.persist();
     return updatedPol;
   }
@@ -2218,6 +2883,174 @@ class LocalCrmStore {
         stageBreakdown
       },
       pendingLeavesCount: pendingLeaves
+    };
+  }
+
+  // --- Phase 06: Comprehensive Reports & Analytics Engine ---
+  async getComprehensiveReport(requestingUserId?: string): Promise<ComprehensiveReportMetrics> {
+    const todayInTz = this.getTodayInCompanyTimezone();
+
+    // 1. Workforce Analytics
+    // Metric 1: Total active employees = profiles where status === 'active'
+    // Metric 2: Department distribution = grouping of active employees by their assigned department
+    const activeEmps = this.profiles.filter((p) => p.status === 'active');
+    const inactiveEmps = this.profiles.filter((p) => p.status === 'deactivated' || p.status === 'inactive');
+    const deptMap: Record<string, number> = {};
+    for (const emp of activeEmps) {
+      const dept = emp.department || 'General';
+      deptMap[dept] = (deptMap[dept] || 0) + 1;
+    }
+    const departmentDistribution = Object.entries(deptMap).map(([name, count]) => ({ name, count }));
+
+    // 2. Attendance Summary
+    // Evaluated against current active roster and company timezone
+    this.applyMissingCheckoutDerivation();
+    const todayAttendance = this.attendance.filter((a) => a.date === todayInTz);
+    const clockedInCount = todayAttendance.filter((a) => a.clock_in).length;
+    const clockedOutCount = todayAttendance.filter((a) => a.clock_out).length;
+    const lateArrivals = todayAttendance.filter((a) => a.is_late || a.status === 'late').length;
+    const missingCheckouts = todayAttendance.filter(
+      (a) => a.clock_in && !a.clock_out && (a.is_missing_checkout || a.status === 'half_day')
+    ).length;
+    const onLeaveToday = todayAttendance.filter((a) => a.status === 'on_leave').length;
+    const absentToday = todayAttendance.filter((a) => a.status === 'absent').length;
+    const totalExpected = activeEmps.length;
+    const attendanceRatePercent = totalExpected > 0 ? Math.round((clockedInCount / totalExpected) * 100) : 100;
+    const clockedOutWithHours = todayAttendance.filter((a) => a.clock_out && (a.total_hours || 0) > 0);
+    const avgWorkingHours = clockedOutWithHours.length > 0
+      ? Number((clockedOutWithHours.reduce((acc, curr) => acc + (curr.total_hours || 0), 0) / clockedOutWithHours.length).toFixed(1))
+      : 8.0;
+
+    // 3. Leave Statistics
+    // Metric: Approval Rate = (Approved / (Approved + Rejected)) * 100
+    // Total days taken = sum of days_count across all approved leaves
+    const pendingLeaves = this.leaves.filter((l) => l.status === 'pending');
+    const approvedLeaves = this.leaves.filter((l) => l.status === 'approved');
+    const rejectedLeaves = this.leaves.filter((l) => l.status === 'rejected');
+    const resolvedLeavesCount = approvedLeaves.length + rejectedLeaves.length;
+    const approvalRatePercent = resolvedLeavesCount > 0 ? Math.round((approvedLeaves.length / resolvedLeavesCount) * 100) : 100;
+    const totalDaysTaken = approvedLeaves.reduce((acc, curr) => acc + (curr.days_count || 1), 0);
+    const leaveTypeMap: Record<string, { days: number; count: number }> = {};
+    for (const l of approvedLeaves) {
+      const t = l.leave_type;
+      if (!leaveTypeMap[t]) leaveTypeMap[t] = { days: 0, count: 0 };
+      leaveTypeMap[t].days += l.days_count || 1;
+      leaveTypeMap[t].count += 1;
+    }
+    const typeBreakdown = Object.entries(leaveTypeMap).map(([type, stats]) => ({
+      type: type.charAt(0).toUpperCase() + type.slice(1),
+      days: stats.days,
+      count: stats.count
+    }));
+
+    // 4. Sales Pipeline & Conversion Metrics
+    // Active leads = leads not marked dead and not won/lost
+    // Dead leads = leads marked is_dead === true
+    // Locked leads = leads marked is_locked === true
+    // Conversion rate = (Won Deals / (Won Deals + Lost Deals)) * 100
+    // Total Pipeline Value = sum of estimated values of all active deals
+    // Won Revenue = sum of deal values for leads in 'won' stage
+    const totalLeads = this.leads.length;
+    const activeLeads = this.leads.filter((l) => !l.is_dead && l.stage !== 'won' && l.stage !== 'lost').length;
+    const deadLeads = this.leads.filter((l) => l.is_dead).length;
+    const lockedLeads = this.leads.filter((l) => l.is_locked).length;
+    const wonLeads = this.leads.filter((l) => l.stage === 'won');
+    const lostLeads = this.leads.filter((l) => l.stage === 'lost');
+    const wonCount = wonLeads.length;
+    const lostCount = lostLeads.length;
+    const totalPipelineValue = this.leads
+      .filter((l) => !l.is_dead && l.stage !== 'won' && l.stage !== 'lost')
+      .reduce((sum, l) => sum + (l.value || 0), 0);
+    const wonRevenue = wonLeads.reduce((sum, l) => sum + (l.value || 0), 0);
+    const avgWonDealValue = wonCount > 0 ? Math.round(wonRevenue / wonCount) : 0;
+    const closedCount = wonCount + lostCount;
+    const conversionRatePercent = closedCount > 0 ? Math.round((wonCount / closedCount) * 100) : (totalLeads > 0 ? Math.round((wonCount / totalLeads) * 100) : 0);
+
+    const STAGE_ORDER: LeadStage[] = ['new', 'contacted', 'qualified', 'proposal', 'won', 'lost'];
+    const stageDistribution = STAGE_ORDER.map((stage) => {
+      const stageLeads = this.leads.filter((l) => l.stage === stage && !l.is_dead);
+      return {
+        stage: stage.charAt(0).toUpperCase() + stage.slice(1),
+        count: stageLeads.length,
+        value: stageLeads.reduce((s, l) => s + (l.value || 0), 0)
+      };
+    });
+
+    // 5. Follow-ups Due
+    const pendingFollowups = this.followUps.filter((f) => f.status !== 'completed' && f.status !== 'cancelled');
+    const dueTodayCount = pendingFollowups.filter((f) => f.due_date === todayInTz).length;
+    const overdueCount = pendingFollowups.filter((f) => f.due_date < todayInTz).length;
+    const upcomingCount = pendingFollowups.filter((f) => f.due_date > todayInTz).length;
+    const completedCount = this.followUps.filter((f) => f.status === 'completed').length;
+    const cancelledCount = this.followUps.filter((f) => f.status === 'cancelled').length;
+
+    // 6. Employee-wise Lead Activity & Performance
+    const repPerformance = activeEmps.map((emp) => {
+      const assigned = this.leads.filter((l) => l.assigned_to === emp.id);
+      const won = assigned.filter((l) => l.stage === 'won');
+      const wonRev = won.reduce((sum, l) => sum + (l.value || 0), 0);
+      const activities = this.activities.filter((a) => a.user_id === emp.id).length +
+        this.emailLogs.filter((e) => e.sender_user_id === emp.id).length;
+      const repConversion = assigned.length > 0 ? Math.round((won.length / assigned.length) * 100) : 0;
+      return {
+        repId: emp.id,
+        repName: emp.name,
+        repEmail: emp.email,
+        assignedLeadsCount: assigned.length,
+        wonLeadsCount: won.length,
+        wonRevenue: wonRev,
+        activitiesCount: activities,
+        conversionRatePercent: repConversion
+      };
+    }).sort((a, b) => b.wonRevenue - a.wonRevenue || b.assignedLeadsCount - a.assignedLeadsCount);
+
+    return {
+      workforce: {
+        totalActive: activeEmps.length,
+        totalInactive: inactiveEmps.length,
+        totalDepartments: departmentDistribution.length,
+        departmentDistribution
+      },
+      attendance: {
+        todayTotalExpected: totalExpected,
+        clockedIn: clockedInCount,
+        clockedOut: clockedOutCount,
+        lateArrivals,
+        missingCheckouts,
+        onLeave: onLeaveToday,
+        absent: absentToday,
+        attendanceRatePercent,
+        avgWorkingHours
+      },
+      leaves: {
+        pendingCount: pendingLeaves.length,
+        approvedCount: approvedLeaves.length,
+        rejectedCount: rejectedLeaves.length,
+        approvalRatePercent,
+        totalDaysTaken,
+        typeBreakdown
+      },
+      pipeline: {
+        totalLeads,
+        activeLeads,
+        deadLeads,
+        lockedLeads,
+        wonLeads: wonCount,
+        lostLeads: lostCount,
+        totalPipelineValue,
+        wonRevenue,
+        avgWonDealValue,
+        conversionRatePercent,
+        stageDistribution
+      },
+      followups: {
+        dueTodayCount,
+        overdueCount,
+        upcomingCount,
+        completedCount,
+        cancelledCount
+      },
+      repPerformance
     };
   }
 }
@@ -3005,6 +3838,134 @@ export const crmService = {
   // Dashboard Stats
   async getDashboardStats(): Promise<DashboardStats> {
     return localCrmStore.getDashboardStats();
+  },
+
+  // --- Phase 06: Notifications, Reports & Audit Logs ---
+  async getNotifications(
+    requestingUserId: string,
+    filter?: { unreadOnly?: boolean; type?: NotificationType }
+  ): Promise<AppNotification[]> {
+    if (isSupabaseConfigured) {
+      let query = supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', requestingUserId)
+        .order('created_at', { ascending: false });
+
+      if (filter?.unreadOnly) {
+        query = query.eq('is_read', false);
+      }
+      if (filter?.type) {
+        query = query.eq('type', filter.type);
+      }
+      const { data, error } = await query;
+      if (!error && data) return data;
+    }
+    return localCrmStore.getNotifications(requestingUserId, filter);
+  },
+
+  async getUnreadNotificationCount(requestingUserId: string): Promise<number> {
+    if (isSupabaseConfigured) {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', requestingUserId)
+        .eq('is_read', false);
+      if (!error && count !== null) return count;
+    }
+    return localCrmStore.getUnreadNotificationCount(requestingUserId);
+  },
+
+  async markNotificationAsRead(notificationId: string, requestingUserId: string): Promise<AppNotification> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from('notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('id', notificationId)
+        .eq('user_id', requestingUserId)
+        .select()
+        .single();
+      if (!error && data) return data;
+    }
+    return localCrmStore.markNotificationAsRead(notificationId, requestingUserId);
+  },
+
+  async markAllNotificationsAsRead(requestingUserId: string): Promise<{ count: number }> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from('notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('user_id', requestingUserId)
+        .eq('is_read', false)
+        .select();
+      if (!error && data) return { count: data.length };
+    }
+    return localCrmStore.markAllNotificationsAsRead(requestingUserId);
+  },
+
+  async createNotification(
+    data: Omit<AppNotification, 'id' | 'created_at' | 'is_read' | 'read_at'>
+  ): Promise<AppNotification> {
+    if (isSupabaseConfigured) {
+      const { data: created, error } = await supabase
+        .from('notifications')
+        .insert({
+          ...data,
+          is_read: false
+        })
+        .select()
+        .single();
+      if (!error && created) return created;
+    }
+    return localCrmStore.createNotification(data);
+  },
+
+  async getAuditLogs(
+    requestingUserId?: string,
+    filter?: {
+      actor_id?: string;
+      target_type?: AuditTargetType;
+      action?: AuditAction;
+      search?: string;
+      startDate?: string;
+      endDate?: string;
+    }
+  ): Promise<AuditLogEntry[]> {
+    if (isSupabaseConfigured) {
+      let query = supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
+      if (filter?.actor_id) query = query.eq('actor_id', filter.actor_id);
+      if (filter?.target_type) query = query.eq('target_type', filter.target_type);
+      if (filter?.action) query = query.eq('action', filter.action);
+      if (filter?.startDate) query = query.gte('created_at', filter.startDate);
+      if (filter?.endDate) query = query.lte('created_at', filter.endDate);
+      const { data, error } = await query;
+      if (!error && data) return data;
+    }
+    return localCrmStore.getAuditLogs(requestingUserId, filter);
+  },
+
+  async recordAuditLog(entry: Omit<AuditLogEntry, 'id' | 'created_at'>): Promise<AuditLogEntry> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('audit_logs').insert(entry).select().single();
+      if (!error && data) return data;
+    }
+    return localCrmStore.recordAuditLog(entry);
+  },
+
+  async claimDeadLead(leadId: string, claimingUserId: string): Promise<Lead> {
+    return localCrmStore.claimDeadLead(leadId, claimingUserId);
+  },
+
+  async unlockDeadLead(leadId: string, requestingUserId: string): Promise<Lead> {
+    return localCrmStore.unlockDeadLead(leadId, requestingUserId);
+  },
+
+  async assignLead(leadId: string, assigneeId: string | null, requestingUserId: string): Promise<Lead> {
+    return localCrmStore.assignLead(leadId, assigneeId, requestingUserId);
+  },
+
+  async getComprehensiveReport(requestingUserId?: string): Promise<ComprehensiveReportMetrics> {
+    return localCrmStore.getComprehensiveReport(requestingUserId);
   },
 
   resetState(): void {

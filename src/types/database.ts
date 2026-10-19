@@ -45,6 +45,7 @@ export interface AttendanceRecord {
   status: AttendanceStatus;
   is_late: boolean;
   is_early_departure: boolean;
+  is_missing_checkout?: boolean;
   notes?: string | null;
   correction_reason?: string | null;
   corrected_by?: string | null;
@@ -128,6 +129,12 @@ export interface Lead {
   days_since_last_contact?: number;
   has_pending_followup?: boolean;
   pending_followup_date?: string | null;
+  is_dead?: boolean;
+  is_locked?: boolean;
+  locked_by?: string | null;
+  locked_at?: string | null;
+  claimed_by?: string | null;
+  claimed_at?: string | null;
 }
 
 export interface LeadActivity {
@@ -356,3 +363,143 @@ export interface DashboardStats {
   };
   pendingLeavesCount: number;
 }
+
+// Phase 06: Notifications, Audit Logs, and Comprehensive Reports
+export type NotificationType =
+  | 'lead_assigned'
+  | 'dead_lead_claimed'
+  | 'dead_lead_unlocked'
+  | 'followup_due'
+  | 'reply_recorded'
+  | 'leave_reviewed'
+  | 'leave_applied'
+  | 'notice_published'
+  | 'policy_updated'
+  | 'attendance_exception'
+  | 'admin_override'
+  | 'general';
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  link: string;
+  is_read: boolean;
+  read_at?: string | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+  user?: UserProfile;
+}
+
+export type AuditAction =
+  | 'employee_created'
+  | 'employee_deactivated'
+  | 'role_changed'
+  | 'attendance_regularized'
+  | 'attendance_clock_in'
+  | 'attendance_clock_out'
+  | 'leave_applied'
+  | 'leave_approved'
+  | 'leave_rejected'
+  | 'leave_cancelled'
+  | 'lead_created'
+  | 'lead_assigned'
+  | 'lead_status_changed'
+  | 'lead_claimed'
+  | 'lead_unlocked'
+  | 'admin_lock_override'
+  | 'email_logged'
+  | 'reply_recorded'
+  | 'policy_published'
+  | 'policy_updated'
+  | 'notice_published'
+  | 'notice_scheduled'
+  | 'notice_archived'
+  | 'settings_updated';
+
+export type AuditTargetType =
+  | 'employee'
+  | 'attendance'
+  | 'leave'
+  | 'lead'
+  | 'email'
+  | 'policy'
+  | 'notice'
+  | 'settings';
+
+export interface AuditLogEntry {
+  id: string;
+  actor_id?: string | null;
+  actor_name: string;
+  actor_email: string;
+  actor_role: string;
+  action: AuditAction;
+  target_type: AuditTargetType;
+  target_id: string;
+  target_name: string;
+  before_state?: Record<string, any> | null;
+  after_state?: Record<string, any> | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface ComprehensiveReportMetrics {
+  workforce: {
+    totalActive: number;
+    totalInactive: number;
+    totalDepartments: number;
+    departmentDistribution: { name: string; count: number }[];
+  };
+  attendance: {
+    todayTotalExpected: number;
+    clockedIn: number;
+    clockedOut: number;
+    lateArrivals: number;
+    missingCheckouts: number;
+    onLeave: number;
+    absent: number;
+    attendanceRatePercent: number;
+    avgWorkingHours: number;
+  };
+  leaves: {
+    pendingCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+    approvalRatePercent: number;
+    totalDaysTaken: number;
+    typeBreakdown: { type: string; days: number; count: number }[];
+  };
+  pipeline: {
+    totalLeads: number;
+    activeLeads: number;
+    deadLeads: number;
+    lockedLeads: number;
+    wonLeads: number;
+    lostLeads: number;
+    totalPipelineValue: number;
+    wonRevenue: number;
+    avgWonDealValue: number;
+    conversionRatePercent: number;
+    stageDistribution: { stage: string; count: number; value: number }[];
+  };
+  followups: {
+    dueTodayCount: number;
+    overdueCount: number;
+    upcomingCount: number;
+    completedCount: number;
+    cancelledCount: number;
+  };
+  repPerformance: {
+    repId: string;
+    repName: string;
+    repEmail: string;
+    assignedLeadsCount: number;
+    wonLeadsCount: number;
+    wonRevenue: number;
+    activitiesCount: number;
+    conversionRatePercent: number;
+  }[];
+}
+
