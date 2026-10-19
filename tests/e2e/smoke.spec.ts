@@ -1,11 +1,11 @@
 /**
  * CRM End-to-End Smoke Test Suite
- * Validates core routes, authentication guard redirects, and page render states.
+ * Validates core routes, navigation targets, and page render states.
  */
-import { describe, it, expect } from "vitest";
+import { test, expect } from "@playwright/test";
 
-describe("CRM E2E Application Smoke Tests", () => {
-  it("defines standard application routes and navigation targets", () => {
+test.describe("CRM E2E Application Smoke Tests", () => {
+  test("defines standard application routes and navigation targets", () => {
     const coreRoutes = [
       "/login",
       "/",
@@ -24,7 +24,7 @@ describe("CRM E2E Application Smoke Tests", () => {
     expect(coreRoutes).toContain("/attendance");
   });
 
-  it("ensures environment configuration keys are typed and defined", () => {
+  test("ensures environment configuration keys are typed and defined", () => {
     const requiredEnvKeys = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"];
     expect(requiredEnvKeys).toHaveLength(2);
   });

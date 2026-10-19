@@ -58,6 +58,8 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_AUDIT_LOGS
 } from './mockData';
+import { rateLimiter } from '../lib/rateLimiter';
+import { sanitizeAuditPayload } from '../lib/security';
 
 // Storage Keys for reactive offline/demo persistence
 const STORAGE_PREFIX = 'vingo_crm_';
@@ -169,8 +171,15 @@ class LocalCrmStore {
 
   // --- Audit Logs (Tamper-evident, immutable system ledger) ---
   async recordAuditLog(entry: Omit<AuditLogEntry, 'id' | 'created_at'>): Promise<AuditLogEntry> {
+    const sanitizedBefore = sanitizeAuditPayload(entry.before_state as Record<string, unknown> | null);
+    const sanitizedAfter = sanitizeAuditPayload(entry.after_state as Record<string, unknown> | null);
+    const sanitizedMetadata = sanitizeAuditPayload(entry.metadata as Record<string, unknown> | null);
+
     const newEntry: AuditLogEntry = {
       ...entry,
+      before_state: (sanitizedBefore as Record<string, any>) || null,
+      after_state: (sanitizedAfter as Record<string, any>) || null,
+      metadata: (sanitizedMetadata as Record<string, any>) || undefined,
       id: 'audit-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
       created_at: new Date().toISOString()
     };
@@ -551,6 +560,10 @@ class LocalCrmStore {
   }
 
   async clockIn(userId: string, notes?: string): Promise<AttendanceRecord> {
+    const user = this.profiles.find((p) => p.id === userId);
+    if (!user || user.status === 'deactivated') {
+      throw new Error('Unauthorized: Deactivated account cannot record attendance.');
+    }
     const today = new Date().toISOString().split('T')[0];
     const existingIdx = this.attendance.findIndex((a) => a.user_id === userId && a.date === today);
     if (existingIdx !== -1 && this.attendance[existingIdx].clock_in) {
@@ -594,6 +607,10 @@ class LocalCrmStore {
   }
 
   async clockOut(userId: string, notes?: string): Promise<AttendanceRecord> {
+    const user = this.profiles.find((p) => p.id === userId);
+    if (!user || user.status === 'deactivated') {
+      throw new Error('Unauthorized: Deactivated account cannot record attendance.');
+    }
     const today = new Date().toISOString().split('T')[0];
     const idx = this.attendance.findIndex((a) => a.user_id === userId && a.date === today);
     if (idx === -1 || !this.attendance[idx].clock_in) {
@@ -779,6 +796,11 @@ class LocalCrmStore {
   }
 
   async applyLeave(data: Omit<LeaveRecord, 'id' | 'status' | 'created_at'>): Promise<LeaveRecord> {
+    const applicantUser = this.profiles.find((p) => p.id === data.user_id);
+    if (!applicantUser || applicantUser.status === 'deactivated') {
+      throw new Error('Unauthorized: Deactivated account cannot apply for leave.');
+    }
+
     if (data.start_date > data.end_date) {
       throw new Error('Invalid Dates: Start date cannot be after end date.');
     }
@@ -1141,14 +1163,24 @@ class LocalCrmStore {
     const idx = this.leads.findIndex((l) => l.id === leadId);
     if (idx === -1) throw new Error('Lead not found');
     const lead = this.leads[idx];
-    if (!lead.is_dead) {
-      throw new Error('Only dead or dormant leads can be claimed.');
-    }
     if (lead.is_locked && lead.locked_by !== claimingUserId) {
       throw new Error('Lead is currently locked by another sales representative.');
     }
+    if (!lead.is_dead && !lead.is_locked) {
+      throw new Error('Only dead or dormant leads can be claimed.');
+    }
     const claimer = this.profiles.find((p) => p.id === claimingUserId);
     if (!claimer) throw new Error('User not found');
+    if (claimer.status === 'deactivated') {
+      throw new Error('Unauthorized: Deactivated account cannot claim leads.');
+    }
+
+    // Rate limiting check
+    const rateCheck = rateLimiter.checkLeadClaim(claimingUserId);
+    if (!rateCheck.allowed) {
+      throw new Error(`Rate limit exceeded: You have attempted too many lead operations. Please retry in ${rateCheck.retryAfterSeconds} seconds.`);
+    }
+    rateLimiter.recordLeadClaim(claimingUserId);
 
     const beforeState = { ...lead };
     const now = new Date().toISOString();

@@ -3,6 +3,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { UserProfile } from '../types/database';
 import { crmService } from '../services/crmService';
 import { isFounderOrAdminRole, isAccountActive } from '../lib/authConfig';
+import { rateLimiter } from '../lib/rateLimiter';
 
 interface Toast {
   id: string;
@@ -173,12 +174,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cleanEmail = email.trim().toLowerCase();
 
+      // Brute-force rate limiting protection
+      const rateCheck = rateLimiter.checkLoginAttempt(cleanEmail);
+      if (!rateCheck.allowed) {
+        throw new Error(`Too many failed login attempts. Account temporarily locked. Please try again in ${rateCheck.retryAfterSeconds} seconds.`);
+      }
+
       if (isSupabaseConfigured) {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password: password || 'password123',
         });
-        if (error) throw error;
+        if (error) {
+          rateLimiter.recordFailedLogin(cleanEmail);
+          throw error;
+        }
         if (!data.user) throw new Error('No user returned from authentication.');
 
         const profile = await crmService.getEmployeeById(data.user.id);
@@ -187,6 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const validated = validateUserProfile(profile, portalType);
+        rateLimiter.resetLogin(cleanEmail);
         setUser(validated);
         localStorage.setItem('vingo_current_user', JSON.stringify(validated));
         showToast(`Welcome back, ${validated.name}!`, 'success');
@@ -197,10 +208,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const found = allEmployees.find((p) => p.email.toLowerCase() === cleanEmail);
 
         if (!found) {
+          rateLimiter.recordFailedLogin(cleanEmail);
           throw new Error('No registered company account found with this email.');
         }
 
         const validated = validateUserProfile(found, portalType);
+        rateLimiter.resetLogin(cleanEmail);
         setUser(validated);
         localStorage.setItem('vingo_current_user', JSON.stringify(validated));
         showToast(`Signed in as ${validated.name} (${validated.role === 'founder_admin' ? 'Founder' : validated.role.toUpperCase()})`, 'success');
@@ -238,6 +251,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const resetPassword = async (email: string): Promise<{ success: boolean; message: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     try {
+      const rateCheck = rateLimiter.checkPasswordReset(cleanEmail);
+      if (!rateCheck.allowed) {
+        throw new Error(`Too many password reset requests. Please try again in ${rateCheck.retryAfterSeconds} seconds.`);
+      }
+      rateLimiter.recordPasswordReset(cleanEmail);
+
       if (isSupabaseConfigured) {
         const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
           redirectTo: `${window.location.origin}/reset-password`,
