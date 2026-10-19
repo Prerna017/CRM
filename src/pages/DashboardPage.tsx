@@ -37,7 +37,7 @@ export const DashboardPage: React.FC = () => {
         crmService.getDashboardStats(),
         crmService.getTodayAttendance(user?.id || ''),
         crmService.getLeads(),
-        crmService.getAnnouncements(),
+        crmService.getAnnouncements(user?.id),
         crmService.getPolicies(user?.id || '')
       ]);
 
