@@ -6,6 +6,16 @@ import {
   LeaveRecord,
   Lead,
   LeadActivity,
+  EmailLog,
+  EmailReplyCategory,
+  FollowUp,
+  FollowUpStatus,
+  FollowUpType,
+  LeadPriority,
+  EmailProvider,
+  IntegrationStatus,
+  EmailIntegrationConfig,
+  InboundEmailBuffer,
   Announcement,
   Notice,
   NoticePriority,
@@ -25,6 +35,10 @@ import {
   INITIAL_PROFILES,
   INITIAL_LEADS,
   INITIAL_LEAD_ACTIVITIES,
+  INITIAL_EMAIL_LOGS,
+  INITIAL_FOLLOW_UPS,
+  INITIAL_EMAIL_INTEGRATIONS,
+  INITIAL_INBOUND_BUFFER,
   INITIAL_ATTENDANCE,
   INITIAL_LEAVES,
   INITIAL_ANNOUNCEMENTS,
@@ -61,6 +75,10 @@ class LocalCrmStore {
   private profiles: UserProfile[];
   private leads: Lead[];
   private activities: LeadActivity[];
+  private emailLogs: EmailLog[];
+  private followUps: FollowUp[];
+  private emailIntegrations: EmailIntegrationConfig[];
+  private inboundBuffer: InboundEmailBuffer[];
   private attendance: AttendanceRecord[];
   private leaves: LeaveRecord[];
   private announcements: Announcement[];
@@ -76,6 +94,10 @@ class LocalCrmStore {
     this.profiles = getStorageItem('profiles', INITIAL_PROFILES);
     this.leads = getStorageItem('leads', INITIAL_LEADS);
     this.activities = getStorageItem('activities', INITIAL_LEAD_ACTIVITIES);
+    this.emailLogs = getStorageItem('email_logs', INITIAL_EMAIL_LOGS);
+    this.followUps = getStorageItem('follow_ups', INITIAL_FOLLOW_UPS);
+    this.emailIntegrations = getStorageItem('email_integrations', INITIAL_EMAIL_INTEGRATIONS);
+    this.inboundBuffer = getStorageItem('inbound_buffer', INITIAL_INBOUND_BUFFER);
     this.attendance = getStorageItem('attendance', INITIAL_ATTENDANCE);
     this.leaves = getStorageItem('leaves', INITIAL_LEAVES);
     this.announcements = getStorageItem('announcements', INITIAL_ANNOUNCEMENTS);
@@ -92,6 +114,10 @@ class LocalCrmStore {
     setStorageItem('profiles', this.profiles);
     setStorageItem('leads', this.leads);
     setStorageItem('activities', this.activities);
+    setStorageItem('email_logs', this.emailLogs);
+    setStorageItem('follow_ups', this.followUps);
+    setStorageItem('email_integrations', this.emailIntegrations);
+    setStorageItem('inbound_buffer', this.inboundBuffer);
     setStorageItem('attendance', this.attendance);
     setStorageItem('leaves', this.leaves);
     setStorageItem('announcements', this.announcements);
@@ -108,6 +134,10 @@ class LocalCrmStore {
     this.profiles = JSON.parse(JSON.stringify(INITIAL_PROFILES));
     this.leads = JSON.parse(JSON.stringify(INITIAL_LEADS));
     this.activities = JSON.parse(JSON.stringify(INITIAL_LEAD_ACTIVITIES));
+    this.emailLogs = JSON.parse(JSON.stringify(INITIAL_EMAIL_LOGS));
+    this.followUps = JSON.parse(JSON.stringify(INITIAL_FOLLOW_UPS));
+    this.emailIntegrations = JSON.parse(JSON.stringify(INITIAL_EMAIL_INTEGRATIONS));
+    this.inboundBuffer = JSON.parse(JSON.stringify(INITIAL_INBOUND_BUFFER));
     this.attendance = JSON.parse(JSON.stringify(INITIAL_ATTENDANCE));
     this.leaves = JSON.parse(JSON.stringify(INITIAL_LEAVES));
     this.announcements = JSON.parse(JSON.stringify(INITIAL_ANNOUNCEMENTS));
@@ -674,9 +704,18 @@ class LocalCrmStore {
   }
 
   // --- Leads Pipeline ---
-  async getLeads(): Promise<Lead[]> {
-    return this.leads.map((l) => ({
+  async getLeads(requestingUserId?: string): Promise<Lead[]> {
+    let list = this.leads;
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+      if (!isAdmin) {
+        list = list.filter((l) => l.assigned_to === requestingUserId || l.created_by === requestingUserId || !l.assigned_to);
+      }
+    }
+    return list.map((l) => ({
       ...l,
+      company_name: l.company_name || l.company,
       assignee: this.profiles.find((p) => p.id === l.assigned_to),
       creator: this.profiles.find((p) => p.id === l.created_by),
       activities_count: this.activities.filter((a) => a.lead_id === l.id).length,
@@ -780,6 +819,717 @@ class LocalCrmStore {
     }
     this.persist();
     return newAct;
+  }
+
+  // --- Phase 05: Email Activity & Follow-ups Access & Helper Methods ---
+  private checkLeadAccess(leadId: string, requestingUserId?: string): { lead: Lead; isAdmin: boolean } {
+    const lead = this.leads.find((l) => l.id === leadId);
+    if (!lead) throw new Error('Lead not found');
+
+    if (!requestingUserId) return { lead, isAdmin: true };
+
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+
+    if (!isAdmin) {
+      const isAssigned = lead.assigned_to === requestingUserId;
+      const isCreator = lead.created_by === requestingUserId;
+      const isUnassigned = !lead.assigned_to;
+      if (!isAssigned && !isCreator && !isUnassigned) {
+        throw new Error('Unauthorized: Access denied to conversation. You are not authorized to view communications for this lead.');
+      }
+    }
+
+    return { lead, isAdmin };
+  }
+
+  private isLeadAccessible(leadId: string, requestingUserId?: string): boolean {
+    try {
+      this.checkLeadAccess(leadId, requestingUserId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private getTodayInCompanyTimezone(): string {
+    const tz = this.settings.timezone || 'Asia/Kolkata';
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      return formatter.format(new Date()); // Formats "YYYY-MM-DD"
+    } catch {
+      return new Date().toISOString().split('T')[0];
+    }
+  }
+
+  // --- Email Activity Tracking & Manual Logging ---
+  async getEmailLogs(leadId?: string, requestingUserId?: string): Promise<EmailLog[]> {
+    const enrichLead = (lId: string) => {
+      const l = this.leads.find((lead) => lead.id === lId);
+      if (!l) return undefined;
+      return { ...l, company_name: l.company_name || l.company };
+    };
+
+    if (leadId) {
+      this.checkLeadAccess(leadId, requestingUserId);
+      return this.emailLogs
+        .filter((e) => e.lead_id === leadId)
+        .sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime())
+        .map((e) => ({
+          ...e,
+          sender: this.profiles.find((p) => p.id === e.sender_user_id),
+          lead: enrichLead(e.lead_id)
+        }));
+    }
+
+    return this.emailLogs
+      .filter((e) => this.isLeadAccessible(e.lead_id, requestingUserId))
+      .sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime())
+      .map((e) => ({
+        ...e,
+        sender: this.profiles.find((p) => p.id === e.sender_user_id),
+        lead: enrichLead(e.lead_id)
+      }));
+  }
+
+  async createEmailLog(
+    data: Omit<EmailLog, 'id' | 'created_at' | 'updated_at' | 'sender_user_id' | 'sent_at' | 'reply_received'> & {
+      sender_user_id?: string;
+      sent_at?: string;
+      reply_received?: boolean;
+    },
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    const { lead } = this.checkLeadAccess(data.lead_id, requestingUserId);
+
+    const now = new Date().toISOString();
+    const resolvedSender = data.sender_user_id || requestingUserId || lead.assigned_to || 'user-sales-002';
+    const resolvedSentAt = data.sent_at || now;
+    const enrichedLead = { ...lead, company_name: lead.company_name || lead.company };
+    const newLog: EmailLog = {
+      ...data,
+      id: 'elog-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      sender_user_id: resolvedSender,
+      sent_at: resolvedSentAt,
+      reply_received: Boolean(data.reply_received),
+      created_at: now,
+      updated_at: now,
+      sender: this.profiles.find((p) => p.id === resolvedSender),
+      lead: enrichedLead
+    };
+
+    this.emailLogs.unshift(newLog);
+
+    // Update lead's activity timestamps
+    const lIdx = this.leads.findIndex((l) => l.id === data.lead_id);
+    if (lIdx !== -1) {
+      this.leads[lIdx].updated_at = now;
+      this.leads[lIdx].last_activity_at = resolvedSentAt;
+      this.leads[lIdx].last_contact_at = resolvedSentAt;
+      if (data.reply_received && this.leads[lIdx].stage === 'new') {
+        this.leads[lIdx].stage = 'contacted';
+      }
+    }
+
+    // Record activity in general activities list for chronology
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      lead_id: data.lead_id,
+      user_id: resolvedSender,
+      activity_type: 'email',
+      title: `Outbound Email: ${data.subject}`,
+      content: data.message_content,
+      created_at: resolvedSentAt,
+      user: this.profiles.find((p) => p.id === resolvedSender)
+    });
+
+    // If next follow-up date is provided, automatically schedule an email follow-up
+    if (data.next_follow_up_date) {
+      const existing = this.followUps.find(
+        (f) =>
+          f.lead_id === data.lead_id &&
+          f.due_date === data.next_follow_up_date &&
+          f.type === 'email' &&
+          f.status !== 'completed' &&
+          f.status !== 'cancelled'
+      );
+      if (!existing) {
+        await this.createFollowUp(
+          {
+            lead_id: data.lead_id,
+            assigned_to: data.sender_user_id,
+            created_by: data.sender_user_id,
+            title: `Follow up on: ${data.subject}`,
+            notes: data.notes || `Scheduled next follow-up after sending email '${data.subject}'.`,
+            due_date: data.next_follow_up_date,
+            type: 'email',
+            priority: lead.priority || 'medium'
+          },
+          requestingUserId,
+          true
+        );
+      }
+    }
+
+    this.persist();
+    return newLog;
+  }
+
+  async recordEmailReply(
+    emailLogId: string,
+    replyData: {
+      reply_content?: string;
+      reply_category: EmailReplyCategory;
+      reply_at?: string;
+      next_follow_up_date?: string | null;
+      notes?: string;
+    },
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    const logIdx = this.emailLogs.findIndex((e) => e.id === emailLogId);
+    if (logIdx === -1) throw new Error('Email log not found');
+
+    const log = this.emailLogs[logIdx];
+    const { lead } = this.checkLeadAccess(log.lead_id, requestingUserId);
+
+    const replyTime = replyData.reply_at || new Date().toISOString();
+    const updated: EmailLog = {
+      ...log,
+      reply_received: true,
+      reply_at: replyTime,
+      reply_content: replyData.reply_content || null,
+      reply_category: replyData.reply_category,
+      next_follow_up_date: replyData.next_follow_up_date || log.next_follow_up_date,
+      notes: replyData.notes ? (log.notes ? `${log.notes}\n${replyData.notes}` : replyData.notes) : log.notes,
+      updated_at: new Date().toISOString()
+    };
+
+    this.emailLogs[logIdx] = updated;
+
+    // Update lead stage & activity timestamps
+    const lIdx = this.leads.findIndex((l) => l.id === log.lead_id);
+    if (lIdx !== -1) {
+      this.leads[lIdx].updated_at = new Date().toISOString();
+      this.leads[lIdx].last_activity_at = replyTime;
+      if (this.leads[lIdx].stage === 'new') {
+        this.leads[lIdx].stage = 'contacted';
+      }
+    }
+
+    // Add activity record
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      lead_id: log.lead_id,
+      user_id: requestingUserId || log.sender_user_id,
+      activity_type: 'reply',
+      title: `Email Reply Received: [${replyData.reply_category}]`,
+      content: replyData.reply_content || 'Inbound reply logged.',
+      created_at: replyTime,
+      user: this.profiles.find((p) => p.id === (requestingUserId || log.sender_user_id))
+    });
+
+    // Auto-create follow-up if date specified
+    if (replyData.next_follow_up_date) {
+      await this.createFollowUp(
+        {
+          lead_id: log.lead_id,
+          assigned_to: log.sender_user_id,
+          created_by: requestingUserId || log.sender_user_id,
+          title: `Follow-up on [${replyData.reply_category}] Response`,
+          notes: replyData.reply_content ? `Prospect replied: "${replyData.reply_content.slice(0, 100)}..."` : 'Reply logged.',
+          due_date: replyData.next_follow_up_date,
+          type: 'email',
+          priority: lead.priority || 'high'
+        },
+        requestingUserId,
+        true
+      );
+    }
+
+    this.persist();
+    return updated;
+  }
+
+  // --- Follow-ups Management (Timezone-Aware) ---
+  async getFollowUps(
+    requestingUserId?: string,
+    filter?: { status?: FollowUpStatus | 'all'; leadId?: string; search?: string }
+  ): Promise<FollowUp[]> {
+    const todayInTz = this.getTodayInCompanyTimezone();
+
+    let list = this.followUps.filter((f) => {
+      // Access Control: regular employees can only see follow-ups for leads they are authorized to access, or assigned to them
+      if (requestingUserId) {
+        const caller = this.profiles.find((p) => p.id === requestingUserId);
+        const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+        if (!isAdmin && f.assigned_to !== requestingUserId && !this.isLeadAccessible(f.lead_id, requestingUserId)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (filter?.leadId) {
+      this.checkLeadAccess(filter.leadId, requestingUserId);
+      list = list.filter((f) => f.lead_id === filter.leadId);
+    }
+
+    // Dynamically calculate status using company timezone
+    const evaluated = list.map((f) => {
+      let dynamicStatus: FollowUpStatus = f.status;
+      if (f.status !== 'completed' && f.status !== 'cancelled') {
+        if (f.due_date < todayInTz) {
+          dynamicStatus = 'overdue';
+        } else if (f.due_date === todayInTz) {
+          dynamicStatus = 'due_today';
+        } else {
+          dynamicStatus = 'upcoming';
+        }
+      }
+
+      return {
+        ...f,
+        status: dynamicStatus,
+        lead: this.leads.find((l) => l.id === f.lead_id),
+        assignee: this.profiles.find((p) => p.id === f.assigned_to)
+      };
+    });
+
+    let result = evaluated;
+    if (filter?.status && filter.status !== 'all') {
+      result = result.filter((f) => f.status === filter.status);
+    }
+
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      result = result.filter(
+        (f) =>
+          f.title.toLowerCase().includes(q) ||
+          (f.notes || '').toLowerCase().includes(q) ||
+          (f.lead?.company || '').toLowerCase().includes(q) ||
+          (f.lead?.contact_name || '').toLowerCase().includes(q)
+      );
+    }
+
+    return result.sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
+  }
+
+  async createFollowUp(
+    data: {
+      lead_id: string;
+      title: string;
+      type: FollowUpType;
+      due_date: string;
+      due_time?: string | null;
+      notes?: string | null;
+      priority?: LeadPriority;
+      assigned_to?: string;
+      created_by?: string;
+    },
+    requestingUserId?: string,
+    allowDuplicate: boolean = false
+  ): Promise<FollowUp> {
+    const { lead } = this.checkLeadAccess(data.lead_id, requestingUserId);
+
+    // Prevent duplicate follow-up creation where appropriate
+    if (!allowDuplicate) {
+      const duplicate = this.followUps.find(
+        (f) =>
+          f.lead_id === data.lead_id &&
+          f.due_date === data.due_date &&
+          f.type === data.type &&
+          f.status !== 'completed' &&
+          f.status !== 'cancelled'
+      );
+      if (duplicate) {
+        throw new Error(
+          `Duplicate Follow-up Warning: An active ${data.type} follow-up is already scheduled for ${lead.company} on ${data.due_date}.`
+        );
+      }
+    }
+
+    const todayInTz = this.getTodayInCompanyTimezone();
+    let initialStatus: FollowUpStatus = 'upcoming';
+    if (data.due_date < todayInTz) initialStatus = 'overdue';
+    else if (data.due_date === todayInTz) initialStatus = 'due_today';
+
+    const now = new Date().toISOString();
+    const assignedTo = data.assigned_to || requestingUserId || lead.assigned_to || 'user-sales-002';
+    const createdBy = data.created_by || requestingUserId || 'user-sales-002';
+
+    const newFollowUp: FollowUp = {
+      ...data,
+      id: 'fup-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      assigned_to: assignedTo,
+      created_by: createdBy,
+      priority: data.priority || 'medium',
+      status: initialStatus,
+      created_at: now,
+      updated_at: now,
+      lead,
+      assignee: this.profiles.find((p) => p.id === assignedTo)
+    };
+
+    this.followUps.unshift(newFollowUp);
+
+    // Touch lead updated_at
+    const lIdx = this.leads.findIndex((l) => l.id === data.lead_id);
+    if (lIdx !== -1) {
+      this.leads[lIdx].updated_at = now;
+    }
+
+    this.persist();
+    return newFollowUp;
+  }
+
+  async rescheduleFollowUp(
+    id: string,
+    newDueDate: string,
+    newDueTimeOrReason?: string | null,
+    reasonOrUserId?: string,
+    requestingUserId?: string
+  ): Promise<FollowUp> {
+    const idx = this.followUps.findIndex((f) => f.id === id);
+    if (idx === -1) throw new Error('Follow-up task not found');
+
+    let dueTime: string | null = null;
+    let reason: string | undefined = undefined;
+    let effectiveUserId: string | undefined = requestingUserId;
+
+    if (requestingUserId !== undefined) {
+      dueTime = newDueTimeOrReason || null;
+      reason = reasonOrUserId;
+      effectiveUserId = requestingUserId;
+    } else if (reasonOrUserId !== undefined) {
+      if (newDueTimeOrReason && newDueTimeOrReason.includes(':') && newDueTimeOrReason.length <= 5) {
+        dueTime = newDueTimeOrReason;
+        reason = reasonOrUserId;
+      } else {
+        reason = newDueTimeOrReason || undefined;
+        effectiveUserId = reasonOrUserId;
+      }
+    } else {
+      reason = newDueTimeOrReason || undefined;
+    }
+
+    const current = this.followUps[idx];
+    this.checkLeadAccess(current.lead_id, effectiveUserId);
+
+    const todayInTz = this.getTodayInCompanyTimezone();
+    let newStatus: FollowUpStatus = 'upcoming';
+    if (newDueDate < todayInTz) newStatus = 'overdue';
+    else if (newDueDate === todayInTz) newStatus = 'due_today';
+
+    const updated: FollowUp = {
+      ...current,
+      rescheduled_from: current.due_date,
+      rescheduled_reason: reason || 'Rescheduled by user',
+      due_date: newDueDate,
+      due_time: dueTime !== undefined ? dueTime : current.due_time,
+      status: newStatus,
+      updated_at: new Date().toISOString()
+    };
+
+    this.followUps[idx] = updated;
+
+    // Add activity record
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36),
+      lead_id: current.lead_id,
+      user_id: effectiveUserId || current.assigned_to,
+      activity_type: 'note',
+      title: 'Follow-up Rescheduled',
+      content: `Follow-up '${current.title}' rescheduled from ${current.due_date} to ${newDueDate}. Reason: ${reason || 'N/A'}.`,
+      created_at: new Date().toISOString(),
+      user: this.profiles.find((p) => p.id === (effectiveUserId || current.assigned_to))
+    });
+
+    this.persist();
+    return updated;
+  }
+
+  async completeFollowUp(id: string, notes?: string, requestingUserId?: string): Promise<FollowUp> {
+    const idx = this.followUps.findIndex((f) => f.id === id);
+    if (idx === -1) throw new Error('Follow-up task not found');
+
+    const current = this.followUps[idx];
+    this.checkLeadAccess(current.lead_id, requestingUserId);
+
+    const now = new Date().toISOString();
+    const updated: FollowUp = {
+      ...current,
+      status: 'completed',
+      completed_at: now,
+      completion_notes: notes || null,
+      notes: notes ? (current.notes ? `${current.notes}\n[Completed Notes]: ${notes}` : notes) : current.notes,
+      updated_at: now
+    };
+
+    this.followUps[idx] = updated;
+
+    // Touch lead's last_activity_at
+    const lIdx = this.leads.findIndex((l) => l.id === current.lead_id);
+    if (lIdx !== -1) {
+      this.leads[lIdx].updated_at = now;
+      this.leads[lIdx].last_activity_at = now;
+    }
+
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36),
+      lead_id: current.lead_id,
+      user_id: requestingUserId || current.assigned_to,
+      activity_type: current.type === 'meeting' ? 'meeting' : current.type === 'call' ? 'call' : 'note',
+      title: `Follow-up Completed: ${current.title}`,
+      content: notes || 'Follow-up successfully completed.',
+      created_at: now,
+      user: this.profiles.find((p) => p.id === (requestingUserId || current.assigned_to))
+    });
+
+    this.persist();
+    return updated;
+  }
+
+  async cancelFollowUp(id: string, reason: string, requestingUserId?: string): Promise<FollowUp> {
+    const idx = this.followUps.findIndex((f) => f.id === id);
+    if (idx === -1) throw new Error('Follow-up task not found');
+
+    const current = this.followUps[idx];
+    this.checkLeadAccess(current.lead_id, requestingUserId);
+
+    const now = new Date().toISOString();
+    const updated: FollowUp = {
+      ...current,
+      status: 'cancelled',
+      cancelled_at: now,
+      cancellation_reason: reason,
+      updated_at: now
+    };
+
+    this.followUps[idx] = updated;
+    this.persist();
+    return updated;
+  }
+
+  // --- Stale Leads & No-Response Detection ---
+  async getStaleAndNoResponseLeads(requestingUserId?: string): Promise<{
+    noResponseLeads: Lead[];
+    staleLeads: Lead[];
+    uncontactedThresholdDays: number;
+    noResponseThresholdDays: number;
+    timezone: string;
+  }> {
+    const uncontactedDays = this.settings.uncontacted_threshold_days || 7;
+    const noResponseDays = this.settings.no_response_threshold_days || 5;
+    const now = Date.now();
+
+    const accessibleLeads = this.leads.filter((l) => this.isLeadAccessible(l.id, requestingUserId));
+
+    const noResponseLeads: Lead[] = [];
+    const staleLeads: Lead[] = [];
+
+    for (const lead of accessibleLeads) {
+      const logs = this.emailLogs.filter((e) => e.lead_id === lead.id);
+      const outboundEmails = logs.filter((e) => !e.is_inbound);
+
+      // Check if lead has an unanswered outbound email exceeding threshold
+      if (outboundEmails.length > 0) {
+        // Sort newest first
+        const sorted = [...outboundEmails].sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
+        const latest = sorted[0];
+        if (!latest.reply_received) {
+          const daysElapsed = Math.floor((now - new Date(latest.sent_at).getTime()) / (1000 * 60 * 60 * 24));
+          if (daysElapsed >= noResponseDays) {
+            noResponseLeads.push({
+              ...lead,
+              is_no_response: true,
+              days_since_last_contact: daysElapsed
+            });
+          }
+        }
+      }
+
+      // Check if lead is stale / uncontacted for >= uncontactedDays
+      const referenceDate = lead.last_contact_at || lead.last_activity_at || lead.created_at;
+      const daysSinceActivity = Math.floor((now - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24));
+      if (daysSinceActivity >= uncontactedDays && !['won', 'lost'].includes(lead.stage)) {
+        staleLeads.push({
+          ...lead,
+          days_since_last_contact: daysSinceActivity
+        });
+      }
+    }
+
+    return {
+      noResponseLeads,
+      staleLeads,
+      uncontactedThresholdDays: uncontactedDays,
+      noResponseThresholdDays: noResponseDays,
+      timezone: this.settings.timezone || 'America/New_York'
+    };
+  }
+
+  // --- Email Integration (OAuth, Status, Recoverability & Webhook Inbound) ---
+  async getEmailIntegration(userId: string): Promise<EmailIntegrationConfig | null> {
+    const match = this.emailIntegrations.find((e) => e.user_id === userId);
+    return match ? { ...match } : null;
+  }
+
+  async connectEmailIntegration(
+    userId: string,
+    provider: EmailProvider,
+    connectedEmail: string,
+    scopes: string[] = []
+  ): Promise<EmailIntegrationConfig> {
+    const existingIdx = this.emailIntegrations.findIndex((e) => e.user_id === userId && e.provider === provider);
+
+    const now = new Date().toISOString();
+    const config: EmailIntegrationConfig = {
+      id: existingIdx !== -1 ? this.emailIntegrations[existingIdx].id : 'eint-' + Date.now().toString(36),
+      user_id: userId,
+      provider,
+      status: 'connected',
+      connected_email: connectedEmail,
+      scopes: scopes.length > 0 ? scopes : provider === 'gmail' ? ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'] : ['Mail.Read', 'Mail.Send'],
+      last_sync_at: now,
+      error_message: null,
+      webhook_enabled: true,
+      created_at: existingIdx !== -1 ? this.emailIntegrations[existingIdx].created_at : now,
+      updated_at: now
+    };
+
+    if (existingIdx !== -1) {
+      this.emailIntegrations[existingIdx] = config;
+    } else {
+      this.emailIntegrations.push(config);
+    }
+
+    this.persist();
+    return config;
+  }
+
+  async disconnectEmailIntegration(userId: string): Promise<void> {
+    const idx = this.emailIntegrations.findIndex((e) => e.user_id === userId);
+    if (idx !== -1) {
+      this.emailIntegrations[idx].status = 'disconnected';
+      this.emailIntegrations[idx].connected_email = null;
+      this.emailIntegrations[idx].webhook_enabled = false;
+      this.emailIntegrations[idx].updated_at = new Date().toISOString();
+      this.persist();
+    }
+  }
+
+  async simulateIntegrationError(userId: string, errorMsg?: string): Promise<EmailIntegrationConfig> {
+    const idx = this.emailIntegrations.findIndex((e) => e.user_id === userId);
+    const message = errorMsg || 'OAuth Token Expired: The provider revoked authentication access. Re-authentication required.';
+    if (idx !== -1) {
+      this.emailIntegrations[idx].status = 'error';
+      this.emailIntegrations[idx].error_message = message;
+      this.emailIntegrations[idx].updated_at = new Date().toISOString();
+      this.persist();
+      return this.emailIntegrations[idx];
+    }
+    // Create new in error state if not existing
+    const newConfig: EmailIntegrationConfig = {
+      id: 'eint-' + Date.now().toString(36),
+      user_id: userId,
+      provider: 'gmail',
+      status: 'error',
+      connected_email: null,
+      scopes: [],
+      last_sync_at: null,
+      error_message: message,
+      webhook_enabled: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    this.emailIntegrations.push(newConfig);
+    this.persist();
+    return newConfig;
+  }
+
+  async reconnectEmailIntegration(userId: string): Promise<EmailIntegrationConfig> {
+    const idx = this.emailIntegrations.findIndex((e) => e.user_id === userId);
+    const now = new Date().toISOString();
+    if (idx !== -1) {
+      this.emailIntegrations[idx].status = 'connected';
+      this.emailIntegrations[idx].error_message = null;
+      this.emailIntegrations[idx].last_sync_at = now;
+      this.emailIntegrations[idx].updated_at = now;
+      this.persist();
+      return this.emailIntegrations[idx];
+    }
+    return this.connectEmailIntegration(userId, 'gmail', 'user@company.com');
+  }
+
+  async getInboundEmailBuffer(requestingUserId?: string): Promise<InboundEmailBuffer[]> {
+    return [...this.inboundBuffer].sort(
+      (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime()
+    );
+  }
+
+  async matchInboundEmail(
+    bufferId: string,
+    targetLeadId: string,
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    const buf = this.inboundBuffer.find((b) => b.id === bufferId);
+    if (!buf) throw new Error('Inbound message not found in buffer');
+
+    const { lead } = this.checkLeadAccess(targetLeadId, requestingUserId);
+
+    // Create EmailLog from the inbound buffer
+    const newLog: EmailLog = {
+      id: 'elog-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      lead_id: targetLeadId,
+      sender_user_id: requestingUserId || lead.assigned_to || 'user-sales-002',
+      recipient_email: buf.recipient_email,
+      subject: buf.subject,
+      message_content: buf.body,
+      sent_at: buf.received_at,
+      reply_received: true,
+      reply_at: buf.received_at,
+      reply_content: buf.body,
+      reply_category: 'Interested',
+      thread_id: buf.thread_id,
+      message_id: buf.message_id,
+      is_inbound: true,
+      notes: `Matched from inbound email buffer (${buf.sender_email}).`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      lead
+    };
+
+    this.emailLogs.unshift(newLog);
+
+    // Mark buffer item as processed
+    buf.is_processed = true;
+    buf.matched_lead_id = targetLeadId;
+    buf.is_ambiguous = false;
+
+    // Update lead activity
+    const lIdx = this.leads.findIndex((l) => l.id === targetLeadId);
+    if (lIdx !== -1) {
+      this.leads[lIdx].updated_at = new Date().toISOString();
+      this.leads[lIdx].last_activity_at = buf.received_at;
+    }
+
+    this.activities.unshift({
+      id: 'act-' + Date.now().toString(36),
+      lead_id: targetLeadId,
+      user_id: requestingUserId || lead.assigned_to || 'user-sales-002',
+      activity_type: 'reply',
+      title: `Matched Inbound Reply: ${buf.subject}`,
+      content: buf.body,
+      created_at: buf.received_at
+    });
+
+    this.persist();
+    return newLog;
   }
 
   // --- Announcements / Important Notices ---
@@ -1772,13 +2522,13 @@ export const crmService = {
   },
 
   // Leads
-  async getLeads(): Promise<Lead[]> {
+  async getLeads(requestingUserId?: string): Promise<Lead[]> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('leads').select('*, assignee:profiles!assigned_to(*), creator:profiles!created_by(*)').order('updated_at', { ascending: false });
       if (error) throw error;
       return data || [];
     }
-    return localCrmStore.getLeads();
+    return localCrmStore.getLeads(requestingUserId);
   },
 
   async getLeadById(id: string) {
@@ -2037,6 +2787,219 @@ export const crmService = {
       return;
     }
     return localCrmStore.deleteHoliday(id, requestingUserId);
+  },
+
+  // --- Phase 05: Email Activity Tracking & Follow-ups ---
+  async getEmailLogs(leadId?: string, requestingUserId?: string): Promise<EmailLog[]> {
+    if (isSupabaseConfigured) {
+      let query = supabase.from('email_logs').select('*, lead:leads(*)').order('sent_at', { ascending: false });
+      if (leadId) query = query.eq('lead_id', leadId);
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    }
+    return localCrmStore.getEmailLogs(leadId, requestingUserId);
+  },
+
+  async createEmailLog(
+    data: {
+      lead_id: string;
+      recipient_email: string;
+      subject: string;
+      message_content: string;
+      sent_at?: string;
+      reply_received?: boolean;
+      reply_at?: string | null;
+      reply_category?: EmailReplyCategory | null;
+      next_follow_up_date?: string | null;
+      notes?: string | null;
+    },
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    if (isSupabaseConfigured) {
+      const { data: created, error } = await supabase.from('email_logs').insert({
+        ...data,
+        sender_user_id: requestingUserId
+      }).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return created;
+    }
+    return localCrmStore.createEmailLog(data, requestingUserId);
+  },
+
+  async recordEmailReply(
+    emailLogId: string,
+    replyData: {
+      reply_category: EmailReplyCategory;
+      reply_content?: string;
+      reply_at?: string;
+      next_follow_up_date?: string | null;
+      notes?: string;
+    },
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('email_logs').update({
+        reply_received: true,
+        reply_category: replyData.reply_category,
+        reply_content: replyData.reply_content || null,
+        reply_at: replyData.reply_at || new Date().toISOString(),
+        next_follow_up_date: replyData.next_follow_up_date || null,
+        notes: replyData.notes || null,
+        updated_at: new Date().toISOString()
+      }).eq('id', emailLogId).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.recordEmailReply(emailLogId, replyData, requestingUserId);
+  },
+
+  async getFollowUps(
+    requestingUserId?: string,
+    options?: { status?: FollowUpStatus | 'all'; leadId?: string }
+  ): Promise<FollowUp[]> {
+    if (isSupabaseConfigured) {
+      let query = supabase.from('follow_ups').select('*, lead:leads(*)').order('due_date', { ascending: true });
+      if (options?.status && options.status !== 'all') {
+        query = query.eq('status', options.status);
+      }
+      if (options?.leadId) {
+        query = query.eq('lead_id', options.leadId);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    }
+    return localCrmStore.getFollowUps(requestingUserId, options);
+  },
+
+  async createFollowUp(
+    data: {
+      lead_id: string;
+      title: string;
+      type: FollowUpType;
+      due_date: string;
+      due_time?: string | null;
+      notes?: string | null;
+      priority?: LeadPriority;
+    },
+    requestingUserId?: string,
+    allowDuplicate?: boolean
+  ): Promise<FollowUp> {
+    if (isSupabaseConfigured) {
+      const { data: created, error } = await supabase.from('follow_ups').insert({
+        ...data,
+        assigned_to: requestingUserId,
+        status: 'upcoming'
+      }).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return created;
+    }
+    return localCrmStore.createFollowUp(data, requestingUserId, allowDuplicate);
+  },
+
+  async rescheduleFollowUp(
+    followUpId: string,
+    newDate: string,
+    newTime?: string | null,
+    reason?: string,
+    requestingUserId?: string
+  ): Promise<FollowUp> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('follow_ups').update({
+        due_date: newDate,
+        due_time: newTime || null,
+        rescheduled_reason: reason || null,
+        status: 'upcoming',
+        updated_at: new Date().toISOString()
+      }).eq('id', followUpId).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.rescheduleFollowUp(followUpId, newDate, newTime, reason, requestingUserId);
+  },
+
+  async completeFollowUp(
+    followUpId: string,
+    notes?: string,
+    requestingUserId?: string
+  ): Promise<FollowUp> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('follow_ups').update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        completion_notes: notes || null,
+        updated_at: new Date().toISOString()
+      }).eq('id', followUpId).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.completeFollowUp(followUpId, notes, requestingUserId);
+  },
+
+  async cancelFollowUp(
+    followUpId: string,
+    reason?: string,
+    requestingUserId?: string
+  ): Promise<FollowUp> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('follow_ups').update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        rescheduled_reason: reason || null,
+        updated_at: new Date().toISOString()
+      }).eq('id', followUpId).select('*, lead:leads(*)').single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.cancelFollowUp(followUpId, reason || 'Cancelled by user', requestingUserId);
+  },
+
+  async getStaleAndNoResponseLeads(requestingUserId?: string): Promise<{
+    noResponseLeads: Lead[];
+    staleLeads: Lead[];
+    uncontactedThresholdDays: number;
+    noResponseThresholdDays: number;
+    timezone: string;
+  }> {
+    return localCrmStore.getStaleAndNoResponseLeads(requestingUserId);
+  },
+
+  async getEmailIntegration(userId: string): Promise<EmailIntegrationConfig | null> {
+    return localCrmStore.getEmailIntegration(userId);
+  },
+
+  async connectEmailIntegration(
+    userId: string,
+    provider: EmailProvider,
+    connectedEmail: string,
+    scopes?: string[]
+  ): Promise<EmailIntegrationConfig> {
+    return localCrmStore.connectEmailIntegration(userId, provider, connectedEmail, scopes);
+  },
+
+  async disconnectEmailIntegration(userId: string): Promise<void> {
+    return localCrmStore.disconnectEmailIntegration(userId);
+  },
+
+  async simulateIntegrationError(userId: string, message?: string): Promise<EmailIntegrationConfig> {
+    return localCrmStore.simulateIntegrationError(userId, message);
+  },
+
+  async reconnectEmailIntegration(userId: string): Promise<EmailIntegrationConfig> {
+    return localCrmStore.reconnectEmailIntegration(userId);
+  },
+
+  async getInboundEmailBuffer(requestingUserId?: string): Promise<InboundEmailBuffer[]> {
+    return localCrmStore.getInboundEmailBuffer(requestingUserId);
+  },
+
+  async matchInboundEmail(
+    bufferId: string,
+    targetLeadId: string,
+    requestingUserId?: string
+  ): Promise<EmailLog> {
+    return localCrmStore.matchInboundEmail(bufferId, targetLeadId, requestingUserId);
   },
 
   // Dashboard Stats

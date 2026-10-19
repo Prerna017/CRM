@@ -95,6 +95,8 @@ export interface CompanySettings {
   half_day_hours: number;
   standard_work_hours: number;
   weekly_offs: string[]; // e.g. ['Saturday', 'Sunday']
+  uncontacted_threshold_days?: number;
+  no_response_threshold_days?: number;
   updated_at: string;
 }
 
@@ -102,6 +104,7 @@ export interface Lead {
   id: string;
   title: string;
   company: string;
+  company_name?: string;
   contact_name: string;
   contact_email?: string;
   contact_phone?: string;
@@ -120,6 +123,11 @@ export interface Lead {
   creator?: UserProfile;
   activities_count?: number;
   last_activity_at?: string;
+  last_contact_at?: string;
+  is_no_response?: boolean;
+  days_since_last_contact?: number;
+  has_pending_followup?: boolean;
+  pending_followup_date?: string | null;
 }
 
 export interface LeadActivity {
@@ -132,6 +140,102 @@ export interface LeadActivity {
   follow_up_date?: string | null;
   created_at: string;
   user?: UserProfile;
+}
+
+// Phase 05: Email Activity & Reply Tracking
+export type EmailReplyCategory =
+  | 'Interested'
+  | 'Not Interested'
+  | 'Follow-up Later'
+  | 'Asked for Pricing'
+  | 'Meeting Requested'
+  | 'Out of Office'
+  | 'No Response'
+  | 'Unsubscribe Request'
+  | 'Other';
+
+export interface EmailLog {
+  id: string;
+  lead_id: string;
+  sender_user_id: string;
+  recipient_email: string;
+  subject: string;
+  message_content: string;
+  sent_at: string;
+  reply_received: boolean;
+  reply_at?: string | null;
+  reply_content?: string | null;
+  reply_category?: EmailReplyCategory | null;
+  next_follow_up_date?: string | null;
+  notes?: string | null;
+  thread_id?: string | null;
+  message_id?: string | null;
+  is_inbound?: boolean;
+  created_at: string;
+  updated_at?: string;
+  sender?: UserProfile;
+  lead?: Lead;
+}
+
+// Phase 05: Follow-ups Tracking
+export type FollowUpStatus = 'due_today' | 'overdue' | 'upcoming' | 'completed' | 'cancelled';
+export type FollowUpType = 'email' | 'call' | 'meeting' | 'task';
+
+export interface FollowUp {
+  id: string;
+  lead_id: string;
+  assigned_to: string; // user_id
+  created_by: string; // user_id
+  title: string;
+  notes?: string | null;
+  completion_notes?: string | null;
+  due_date: string; // ISO date string YYYY-MM-DD
+  due_time?: string | null; // e.g. "14:00"
+  type: FollowUpType;
+  priority: LeadPriority;
+  status: FollowUpStatus;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  rescheduled_from?: string | null;
+  rescheduled_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  lead?: Lead;
+  assignee?: UserProfile;
+}
+
+// Phase 05: Email Integration (Gmail API & Microsoft Graph)
+export type EmailProvider = 'gmail' | 'microsoft_graph';
+export type IntegrationStatus = 'connected' | 'disconnected' | 'error';
+
+export interface EmailIntegrationConfig {
+  id: string;
+  user_id: string;
+  provider: EmailProvider;
+  status: IntegrationStatus;
+  connected_email: string | null;
+  scopes: string[];
+  last_sync_at: string | null;
+  error_message: string | null;
+  webhook_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InboundEmailBuffer {
+  id: string;
+  message_id: string;
+  thread_id?: string | null;
+  sender_email: string;
+  sender_name?: string;
+  recipient_email: string;
+  subject: string;
+  body: string;
+  received_at: string;
+  matched_lead_id?: string | null;
+  is_ambiguous?: boolean;
+  is_processed: boolean;
 }
 
 export type NoticePriority = 'normal' | 'important' | 'urgent' | 'low' | 'high';

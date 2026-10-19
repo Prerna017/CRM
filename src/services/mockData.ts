@@ -4,6 +4,10 @@ import {
   LeaveRecord,
   Lead,
   LeadActivity,
+  EmailLog,
+  FollowUp,
+  EmailIntegrationConfig,
+  InboundEmailBuffer,
   Announcement,
   NoticeRead,
   NoticeAcknowledgement,
@@ -269,6 +273,25 @@ export const INITIAL_LEADS: Lead[] = [
     created_by: 'user-sales-002',
     created_at: '2026-09-15T09:30:00Z',
     updated_at: '2026-10-05T15:00:00Z',
+  },
+  {
+    id: 'lead-007',
+    title: 'Automated CI/CD Test Pipeline Tooling',
+    company: 'Quantum Code Works',
+    contact_name: 'Devin Thorne',
+    contact_email: 'devin@quantumcode.dev',
+    contact_phone: '+1 (555) 312-8800',
+    value: 64000,
+    currency: 'USD',
+    stage: 'qualified',
+    priority: 'high',
+    source: 'referral',
+    assigned_to: 'user-eng-003',
+    expected_close_date: '2026-11-20',
+    notes: 'Confidential conversation regarding internal DevOps architecture.',
+    created_by: 'user-eng-003',
+    created_at: '2026-10-10T11:00:00Z',
+    updated_at: '2026-10-18T10:00:00Z',
   }
 ];
 
@@ -418,6 +441,8 @@ export const INITIAL_SETTINGS: CompanySettings = {
   half_day_hours: 4.5,
   standard_work_hours: 8.0,
   weekly_offs: ['Sunday', 'Saturday'],
+  uncontacted_threshold_days: 7,
+  no_response_threshold_days: 5,
   updated_at: '2026-10-19T09:00:00Z'
 };
 
@@ -894,4 +919,291 @@ export const INITIAL_HOLIDAYS: CompanyHoliday[] = [
   { id: 'hol-7', title: 'Thanksgiving Day', date: '2026-11-26', description: 'National day of gratitude and harvest', is_mandatory: true, created_at: '2026-01-01' },
   { id: 'hol-8', title: 'Day After Thanksgiving', date: '2026-11-27', description: 'Extended holiday weekend', is_mandatory: true, created_at: '2026-01-01' },
   { id: 'hol-9', title: 'Christmas Day', date: '2026-12-25', description: 'Winter holidays celebration', is_mandatory: true, created_at: '2026-01-01' },
+];
+
+export const INITIAL_EMAIL_LOGS: EmailLog[] = [
+  {
+    id: 'elog-001',
+    lead_id: 'lead-001',
+    sender_user_id: 'user-sales-002',
+    recipient_email: 'd.sterling@apexlogistics.com',
+    subject: 'Enterprise Cloud Deployment Proposal & Timeline',
+    message_content: 'Hi David,\n\nAttached is our technical architecture proposal and migration schedule for Apex Logistics. Please review Section 4 for infrastructure redundancy.\n\nBest,\nAlex Morgan',
+    sent_at: '2026-10-14T10:00:00Z',
+    reply_received: true,
+    reply_at: '2026-10-14T14:30:00Z',
+    reply_content: 'Thanks Alex. Looked over Section 4. We are interested and would like to review pricing options for the 3-year enterprise term.',
+    reply_category: 'Interested',
+    next_follow_up_date: '2026-10-19',
+    notes: 'Client is keen on multi-year contract discounting.',
+    thread_id: 'th-apex-001',
+    message_id: 'msg-apex-001',
+    is_inbound: false,
+    created_at: '2026-10-14T10:00:00Z',
+    updated_at: '2026-10-14T14:30:00Z'
+  },
+  {
+    id: 'elog-002',
+    lead_id: 'lead-002',
+    sender_user_id: 'user-sales-002',
+    recipient_email: 'ereed@vanguardhealth.io',
+    subject: 'HIPAA Compliance Checklist & SOC2 Type II Report',
+    message_content: 'Dr. Reed,\n\nHere is our audited HIPAA business associate agreement and security assessment for Vanguard Healthcare.\n\nRegards,\nAlex',
+    sent_at: '2026-10-12T09:00:00Z',
+    reply_received: true,
+    reply_at: '2026-10-13T11:00:00Z',
+    reply_content: 'Can you provide line-item pricing for 250 healthcare seats and priority SLA support?',
+    reply_category: 'Asked for Pricing',
+    next_follow_up_date: '2026-10-16',
+    notes: 'Pricing requested for 250 enterprise clinical seats.',
+    thread_id: 'th-vanguard-002',
+    message_id: 'msg-vanguard-001',
+    is_inbound: false,
+    created_at: '2026-10-12T09:00:00Z',
+    updated_at: '2026-10-13T11:00:00Z'
+  },
+  {
+    id: 'elog-003',
+    lead_id: 'lead-005',
+    sender_user_id: 'user-sales-002',
+    recipient_email: 'jvance@solariafin.com',
+    subject: 'Demo Confirmation: Solaria FinTech & Vingo CRM',
+    message_content: 'Hi Julian,\n\nFollowing up on your inbound demo request. Would tomorrow afternoon work for a personalized walkthrough?\n\nBest,\nAlex',
+    sent_at: '2026-10-10T11:00:00Z',
+    reply_received: false,
+    reply_at: null,
+    reply_content: null,
+    reply_category: 'No Response',
+    next_follow_up_date: '2026-10-19',
+    notes: 'Sent initial demo outreach. No reply received (9 days elapsed since contact).',
+    thread_id: 'th-solaria-005',
+    message_id: 'msg-solaria-001',
+    is_inbound: false,
+    created_at: '2026-10-10T11:00:00Z',
+    updated_at: '2026-10-10T11:00:00Z'
+  },
+  {
+    id: 'elog-004',
+    lead_id: 'lead-004',
+    sender_user_id: 'user-mkt-004',
+    recipient_email: 'chloe@hyperscale.agency',
+    subject: 'Discovery Session Follow-up & Platform Demo',
+    message_content: 'Chloe, great speaking today. Let us lock in Thursday at 3 PM for the product architecture walkthrough.',
+    sent_at: '2026-10-15T16:00:00Z',
+    reply_received: true,
+    reply_at: '2026-10-16T09:15:00Z',
+    reply_content: 'Thursday 3 PM works perfectly. Let us invite our technical director as well.',
+    reply_category: 'Meeting Requested',
+    next_follow_up_date: '2026-10-22',
+    notes: 'Technical director will be joining the demo call.',
+    thread_id: 'th-hyperscale-004',
+    message_id: 'msg-hyperscale-001',
+    is_inbound: false,
+    created_at: '2026-10-15T16:00:00Z',
+    updated_at: '2026-10-16T09:15:00Z'
+  },
+  {
+    id: 'elog-005',
+    lead_id: 'lead-007',
+    sender_user_id: 'user-eng-003',
+    recipient_email: 'devin@quantumcode.dev',
+    subject: 'Technical Architecture Review: Quantum Code Works',
+    message_content: 'Devin, checking in on the CI/CD integration specs we discussed last week.',
+    sent_at: '2026-10-16T14:00:00Z',
+    reply_received: true,
+    reply_at: '2026-10-16T14:30:00Z',
+    reply_content: 'Out of Office: I am traveling through Oct 23 with limited email access.',
+    reply_category: 'Out of Office',
+    next_follow_up_date: '2026-10-24',
+    notes: 'Prospect will be back on October 24th.',
+    thread_id: 'th-quantum-007',
+    message_id: 'msg-quantum-001',
+    is_inbound: false,
+    created_at: '2026-10-16T14:00:00Z',
+    updated_at: '2026-10-16T14:30:00Z'
+  }
+];
+
+export const INITIAL_FOLLOW_UPS: FollowUp[] = [
+  {
+    id: 'fup-001',
+    lead_id: 'lead-001',
+    assigned_to: 'user-sales-002',
+    created_by: 'user-sales-002',
+    title: 'Contract Pricing & 3-Year Terms Call',
+    notes: 'Follow up on the pricing proposal with David Sterling.',
+    due_date: '2026-10-19', // Due today in Asia/Kolkata
+    due_time: '14:30',
+    type: 'call',
+    priority: 'urgent',
+    status: 'due_today',
+    created_at: '2026-10-14T14:35:00Z',
+    updated_at: '2026-10-19T08:00:00Z'
+  },
+  {
+    id: 'fup-002',
+    lead_id: 'lead-002',
+    assigned_to: 'user-sales-002',
+    created_by: 'user-sales-002',
+    title: 'Deliver 250-Seat Clinical Pricing Schedule',
+    notes: 'Prepare customized volume tier quotation for Dr. Reed.',
+    due_date: '2026-10-16', // Overdue
+    due_time: '11:00',
+    type: 'email',
+    priority: 'high',
+    status: 'overdue',
+    created_at: '2026-10-13T11:05:00Z',
+    updated_at: '2026-10-17T09:00:00Z'
+  },
+  {
+    id: 'fup-003',
+    lead_id: 'lead-005',
+    assigned_to: 'user-sales-002',
+    created_by: 'user-sales-002',
+    title: 'Nudge #3: Re-engage Solaria FinTech Demo',
+    notes: 'Send short check-in note to Julian Vance.',
+    due_date: '2026-10-19', // Due today
+    due_time: '16:00',
+    type: 'email',
+    priority: 'medium',
+    status: 'due_today',
+    created_at: '2026-10-10T11:05:00Z',
+    updated_at: '2026-10-19T08:00:00Z'
+  },
+  {
+    id: 'fup-004',
+    lead_id: 'lead-004',
+    assigned_to: 'user-mkt-004',
+    created_by: 'user-mkt-004',
+    title: 'HyperScale Media Executive Product Demo',
+    notes: 'Live walkthrough with Chloe Zhang and technical director.',
+    due_date: '2026-10-22', // Upcoming
+    due_time: '15:00',
+    type: 'meeting',
+    priority: 'high',
+    status: 'upcoming',
+    created_at: '2026-10-16T09:20:00Z',
+    updated_at: '2026-10-16T09:20:00Z'
+  },
+  {
+    id: 'fup-005',
+    lead_id: 'lead-001',
+    assigned_to: 'user-sales-002',
+    created_by: 'user-sales-002',
+    title: 'Initial Scope Verification Call',
+    notes: 'Verified server sizing and database volume.',
+    due_date: '2026-10-12',
+    due_time: '10:00',
+    type: 'call',
+    priority: 'high',
+    status: 'completed',
+    completed_at: '2026-10-12T10:45:00Z',
+    created_at: '2026-10-05T10:00:00Z',
+    updated_at: '2026-10-12T10:45:00Z'
+  },
+  {
+    id: 'fup-006',
+    lead_id: 'lead-006',
+    assigned_to: 'user-sales-002',
+    created_by: 'user-sales-002',
+    title: 'Q4 Budget Review Call',
+    notes: 'Discuss planned tooling investment.',
+    due_date: '2026-10-04',
+    due_time: '11:00',
+    type: 'call',
+    priority: 'low',
+    status: 'cancelled',
+    cancelled_at: '2026-10-05T15:00:00Z',
+    cancellation_reason: 'Prospect postponed digital transformation project to next fiscal year.',
+    created_at: '2026-09-25T09:00:00Z',
+    updated_at: '2026-10-05T15:00:00Z'
+  },
+  {
+    id: 'fup-007',
+    lead_id: 'lead-007',
+    assigned_to: 'user-eng-003',
+    created_by: 'user-eng-003',
+    title: 'Review DevOps Pipeline Specs Post-Travel',
+    notes: 'Follow up once Devin returns from conference travel.',
+    due_date: '2026-10-24', // Upcoming
+    due_time: '11:00',
+    type: 'task',
+    priority: 'high',
+    status: 'upcoming',
+    created_at: '2026-10-16T14:35:00Z',
+    updated_at: '2026-10-16T14:35:00Z'
+  }
+];
+
+export const INITIAL_EMAIL_INTEGRATIONS: EmailIntegrationConfig[] = [
+  {
+    id: 'eint-001',
+    user_id: 'user-sales-002',
+    provider: 'gmail',
+    status: 'connected',
+    connected_email: 'alex.morgan.sales@gmail.com',
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
+    last_sync_at: '2026-10-19T10:00:00Z',
+    error_message: null,
+    webhook_enabled: true,
+    created_at: '2026-09-01T08:00:00Z',
+    updated_at: '2026-10-19T10:00:00Z'
+  },
+  {
+    id: 'eint-002',
+    user_id: 'user-founder-001',
+    provider: 'microsoft_graph',
+    status: 'connected',
+    connected_email: 'founder@vingo.com',
+    scopes: ['Mail.Read', 'Mail.Send'],
+    last_sync_at: '2026-10-19T09:30:00Z',
+    error_message: null,
+    webhook_enabled: true,
+    created_at: '2026-08-15T09:00:00Z',
+    updated_at: '2026-10-19T09:30:00Z'
+  },
+  {
+    id: 'eint-003',
+    user_id: 'user-mkt-004',
+    provider: 'gmail',
+    status: 'disconnected',
+    connected_email: null,
+    scopes: [],
+    last_sync_at: null,
+    error_message: null,
+    webhook_enabled: false,
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z'
+  }
+];
+
+export const INITIAL_INBOUND_BUFFER: InboundEmailBuffer[] = [
+  {
+    id: 'ibuf-001',
+    message_id: 'msg-inbound-001',
+    thread_id: 'th-apex-001',
+    sender_email: 'd.sterling@apexlogistics.com',
+    sender_name: 'David Sterling',
+    recipient_email: 'alex.morgan.sales@gmail.com',
+    subject: 'Re: Enterprise Cloud Deployment Proposal & Timeline',
+    body: 'Thanks Alex. Looked over Section 4. We are interested and would like to review pricing options for the 3-year enterprise term.',
+    received_at: '2026-10-14T14:30:00Z',
+    matched_lead_id: 'lead-001',
+    is_ambiguous: false,
+    is_processed: true
+  },
+  {
+    id: 'ibuf-002',
+    message_id: 'msg-inbound-002',
+    thread_id: null,
+    sender_email: 'procurement@unknown-enterprise.com',
+    sender_name: 'Procurement Inquiries',
+    recipient_email: 'sales@vingo.com',
+    subject: 'Request for Information (RFI) - Enterprise Support Tier',
+    body: 'Hello, our procurement committee is evaluating CRM and workflow tools. Could you share your standard pricing catalog and SLA terms?',
+    received_at: '2026-10-18T16:00:00Z',
+    matched_lead_id: null,
+    is_ambiguous: true,
+    is_processed: false
+  }
 ];
