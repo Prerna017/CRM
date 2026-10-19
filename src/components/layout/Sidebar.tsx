@@ -1,20 +1,28 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '@/context/AuthContext';
 import {
   LayoutDashboard,
   Users,
-  Kanban,
   Clock,
   CalendarCheck,
+  Calendar,
+  Kanban,
+  ArchiveX,
+  MailCheck,
+  CalendarClock,
   Megaphone,
   FileText,
-  Calendar,
+  Bell,
   BarChart3,
-  LogOut,
+  History,
+  Settings,
+  User,
+  CalendarPlus,
   Briefcase,
   ShieldCheck,
-  UserCheck
+  UserCheck,
+  LogOut,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -23,16 +31,54 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, setMobileOpen }) => {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isFounderAdmin } = useAuth();
 
   const closeMobile = () => setMobileOpen(false);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+    `flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${
       isActive
         ? 'bg-indigo-600/20 text-indigo-300 font-semibold border-l-4 border-indigo-500 shadow-sm'
         : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
     }`;
+
+  // 15 Founder/Admin Navigation Items
+  const founderNav = [
+    { label: 'Dashboard', path: '/', icon: LayoutDashboard, exact: true },
+    { label: 'Employees', path: '/employees', icon: Users },
+    { label: 'Attendance', path: '/attendance', icon: Clock },
+    { label: 'Leave Management', path: '/leaves', icon: CalendarCheck },
+    { label: 'Holidays', path: '/holidays', icon: Calendar },
+    { label: 'Lead Pipeline', path: '/leads', icon: Kanban, exact: true },
+    { label: 'Dead Leads', path: '/leads/dead', icon: ArchiveX },
+    { label: 'Email Replies', path: '/email/replies', icon: MailCheck },
+    { label: 'Follow-ups', path: '/leads/followups', icon: CalendarClock },
+    { label: 'Important Notices', path: '/announcements', icon: Megaphone },
+    { label: 'Company Policies', path: '/policies', icon: FileText },
+    { label: 'Notifications', path: '/notifications', icon: Bell },
+    { label: 'Reports', path: '/reports', icon: BarChart3 },
+    { label: 'Activity Logs', path: '/activity-logs', icon: History },
+    { label: 'Settings', path: '/settings', icon: Settings },
+  ];
+
+  // 13 Employee Navigation Items
+  const employeeNav = [
+    { label: 'My Dashboard', path: '/', icon: LayoutDashboard, exact: true },
+    { label: 'My Profile', path: '/profile', icon: User },
+    { label: 'My Attendance', path: '/attendance', icon: Clock },
+    { label: 'Apply for Leave', path: '/leaves/apply', icon: CalendarPlus },
+    { label: 'My Leave History', path: '/leaves/history', icon: CalendarCheck },
+    { label: 'Holidays Calendar', path: '/holidays', icon: Calendar },
+    { label: 'My Leads', path: '/leads/my', icon: Kanban },
+    { label: 'Dead Leads', path: '/leads/dead', icon: ArchiveX },
+    { label: 'Email Replies', path: '/email/replies', icon: MailCheck },
+    { label: 'Follow-ups', path: '/leads/followups', icon: CalendarClock },
+    { label: 'Important Notices', path: '/announcements', icon: Megaphone },
+    { label: 'Company Policies', path: '/policies', icon: FileText },
+    { label: 'Notifications', path: '/notifications', icon: Bell },
+  ];
+
+  const currentNav = isAdmin ? founderNav : employeeNav;
 
   return (
     <aside
@@ -41,13 +87,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, setMobileOpen }) =
       }`}
     >
       {/* Brand Header */}
-      <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
+      <div className="p-4 border-b border-slate-800/80 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
-            <Briefcase size={20} />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+            <Briefcase className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-white leading-none">VINGO</h1>
+            <h1 className="text-base font-bold tracking-tight text-white leading-none font-heading">
+              VINGO
+            </h1>
             <span className="text-[10px] tracking-widest uppercase font-semibold text-indigo-400">
               {isAdmin ? 'Founder Portal' : 'Employee Portal'}
             </span>
@@ -56,82 +104,43 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, setMobileOpen }) =
       </div>
 
       {/* Role Pill Banner */}
-      <div className="mx-4 my-3 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between">
-        <span className="text-xs text-slate-400 font-medium">Role:</span>
+      <div className="mx-3 my-2.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between">
+        <span className="text-[11px] text-slate-400 font-medium">Access:</span>
         <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider ${
-            isAdmin
+          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+            isFounderAdmin
+              ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+              : isAdmin
               ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
               : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
           }`}
         >
-          {isAdmin ? <ShieldCheck size={12} /> : <UserCheck size={12} />}
-          {isAdmin ? 'Founder / Admin' : 'Employee'}
+          {isAdmin ? <ShieldCheck className="h-3 w-3" /> : <UserCheck className="h-3 w-3" />}
+          {isFounderAdmin ? '👑 Founder' : isAdmin ? 'Admin' : 'Employee'}
         </span>
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
-        <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Core Operations
+      <nav className="flex-1 px-2.5 py-1.5 space-y-0.5 overflow-y-auto">
+        <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {isAdmin ? 'Management Modules' : 'Workspace Navigation'}
         </div>
 
-        <NavLink to="/" onClick={closeMobile} className={navLinkClass} end>
-          <LayoutDashboard size={18} />
-          <span>Dashboard</span>
-        </NavLink>
-
-        <NavLink to="/leads" onClick={closeMobile} className={navLinkClass}>
-          <Kanban size={18} />
-          <span>{isAdmin ? 'Sales Pipeline' : 'Assigned Leads'}</span>
-        </NavLink>
-
-        <NavLink to="/attendance" onClick={closeMobile} className={navLinkClass}>
-          <Clock size={18} />
-          <span>{isAdmin ? 'Attendance Logs' : 'My Attendance & Clock'}</span>
-        </NavLink>
-
-        <NavLink to="/leaves" onClick={closeMobile} className={navLinkClass}>
-          <CalendarCheck size={18} />
-          <span>{isAdmin ? 'Leave Approvals' : 'Leave Requests'}</span>
-        </NavLink>
-
-        <NavLink to="/employees" onClick={closeMobile} className={navLinkClass}>
-          <Users size={18} />
-          <span>{isAdmin ? 'Employee Directory' : 'Team Directory'}</span>
-        </NavLink>
-
-        <div className="pt-3 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Organization & Policy
-        </div>
-
-        <NavLink to="/announcements" onClick={closeMobile} className={navLinkClass}>
-          <Megaphone size={18} />
-          <span>Announcements</span>
-        </NavLink>
-
-        <NavLink to="/policies" onClick={closeMobile} className={navLinkClass}>
-          <FileText size={18} />
-          <span>Policies & Handbook</span>
-        </NavLink>
-
-        <NavLink to="/holidays" onClick={closeMobile} className={navLinkClass}>
-          <Calendar size={18} />
-          <span>Holidays Calendar</span>
-        </NavLink>
-
-        {isAdmin && (
-          <>
-            <div className="pt-3 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Executive Intel
-            </div>
-
-            <NavLink to="/reports" onClick={closeMobile} className={navLinkClass}>
-              <BarChart3 size={18} />
-              <span>Executive Reports</span>
+        {currentNav.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path + item.label}
+              to={item.path}
+              end={item.exact}
+              onClick={closeMobile}
+              className={navLinkClass}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="truncate">{item.label}</span>
             </NavLink>
-          </>
-        )}
+          );
+        })}
       </nav>
 
       {/* Bottom User Card */}
@@ -141,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, setMobileOpen }) =
             <img
               src={user?.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name || 'User'}`}
               alt={user?.name}
-              className="w-9 h-9 rounded-full object-cover border border-slate-700 flex-shrink-0"
+              className="w-8 h-8 rounded-full object-cover border border-slate-700 flex-shrink-0"
             />
             <div className="min-w-0">
               <p className="text-xs font-semibold text-white truncate">{user?.name}</p>
@@ -151,12 +160,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, setMobileOpen }) =
           <button
             onClick={logout}
             className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-            title="Log out"
+            title="Log out of session"
           >
-            <LogOut size={16} />
+            <LogOut className="h-4 w-4" />
           </button>
         </div>
       </div>
     </aside>
   );
 };
+
+export default Sidebar;

@@ -1,5 +1,5 @@
-export type UserRole = 'admin' | 'employee';
-export type EmployeeStatus = 'active' | 'on_leave' | 'inactive';
+export type UserRole = 'founder_admin' | 'admin' | 'employee';
+export type EmployeeStatus = 'active' | 'on_leave' | 'inactive' | 'deactivated';
 export type AttendanceStatus = 'present' | 'late' | 'half_day' | 'absent' | 'on_leave';
 export type LeaveType = 'annual' | 'sick' | 'casual' | 'emergency';
 export type LeaveStatus = 'pending' | 'approved' | 'rejected';

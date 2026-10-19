@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   UserProfile,
+  UserRole,
   AttendanceRecord,
   LeaveRecord,
   Lead,
@@ -122,6 +123,78 @@ class LocalCrmStore {
       this.profiles[idx].status = 'inactive';
       this.persist();
     }
+  }
+
+  async provisionEmployee(
+    requestingUserId: string,
+    data: Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<UserProfile> {
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an authorized administrator can provision employee accounts.');
+    }
+    return this.createEmployee(data);
+  }
+
+  async assignRole(
+    requestingUserId: string,
+    targetUserId: string,
+    newRole: UserRole
+  ): Promise<UserProfile> {
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an authorized administrator can assign user roles.');
+    }
+    const target = this.profiles.find((p) => p.id === targetUserId);
+    if (!target) throw new Error('Employee not found');
+    if (caller.id === targetUserId && caller.role !== 'founder_admin' && newRole === 'founder_admin') {
+      throw new Error('Unauthorized: Only an existing founder administrator can grant founder privileges.');
+    }
+    return this.updateEmployee(targetUserId, { role: newRole });
+  }
+
+  async deactivateEmployee(
+    requestingUserId: string,
+    targetUserId: string
+  ): Promise<UserProfile> {
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an authorized administrator can deactivate users.');
+    }
+    const target = this.profiles.find((p) => p.id === targetUserId);
+    if (!target) throw new Error('Employee not found');
+    if (target.role === 'founder_admin') {
+      throw new Error('Protected Account: The Founder / Head Admin account cannot be deactivated.');
+    }
+    return this.updateEmployee(targetUserId, { status: 'deactivated' });
+  }
+
+  async updateProfile(
+    requestingUserId: string,
+    targetUserId: string,
+    updates: Partial<UserProfile>
+  ): Promise<UserProfile> {
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || caller.status === 'deactivated') {
+      throw new Error('Unauthorized or account deactivated.');
+    }
+    const isCallerAdmin = caller.role === 'founder_admin' || caller.role === 'admin';
+    if (!isCallerAdmin) {
+      if (requestingUserId !== targetUserId) {
+        throw new Error('Unauthorized: You can only update your own profile.');
+      }
+      if (
+        updates.role !== undefined ||
+        updates.status !== undefined ||
+        updates.salary !== undefined ||
+        updates.annual_leave_quota !== undefined ||
+        updates.sick_leave_quota !== undefined ||
+        updates.casual_leave_quota !== undefined
+      ) {
+        throw new Error('Unauthorized: Employees cannot change their own role, status, salary, or quotas.');
+      }
+    }
+    return this.updateEmployee(targetUserId, updates);
   }
 
   // --- Attendance ---
@@ -626,6 +699,69 @@ export const crmService = {
       return;
     }
     return localCrmStore.deleteEmployee(id);
+  },
+
+  async provisionEmployee(
+    requestingUserId: string,
+    emp: Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<UserProfile> {
+    if (isSupabaseConfigured) {
+      const caller = await this.getEmployeeById(requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can provision employee accounts.');
+      }
+      return this.createEmployee(emp);
+    }
+    return localCrmStore.provisionEmployee(requestingUserId, emp);
+  },
+
+  async assignRole(requestingUserId: string, targetUserId: string, newRole: UserRole): Promise<UserProfile> {
+    if (isSupabaseConfigured) {
+      const caller = await this.getEmployeeById(requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can assign user roles.');
+      }
+      return this.updateEmployee(targetUserId, { role: newRole });
+    }
+    return localCrmStore.assignRole(requestingUserId, targetUserId, newRole);
+  },
+
+  async deactivateEmployee(requestingUserId: string, targetUserId: string): Promise<UserProfile> {
+    if (isSupabaseConfigured) {
+      const caller = await this.getEmployeeById(requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can deactivate users.');
+      }
+      return this.updateEmployee(targetUserId, { status: 'deactivated' });
+    }
+    return localCrmStore.deactivateEmployee(requestingUserId, targetUserId);
+  },
+
+  async updateProfile(requestingUserId: string, targetUserId: string, updates: Partial<UserProfile>): Promise<UserProfile> {
+    if (isSupabaseConfigured) {
+      const caller = await this.getEmployeeById(requestingUserId);
+      if (!caller || caller.status === 'deactivated') {
+        throw new Error('Unauthorized or account deactivated.');
+      }
+      const isCallerAdmin = caller.role === 'founder_admin' || caller.role === 'admin';
+      if (!isCallerAdmin) {
+        if (requestingUserId !== targetUserId) {
+          throw new Error('Unauthorized: You can only update your own profile.');
+        }
+        if (
+          updates.role !== undefined ||
+          updates.status !== undefined ||
+          updates.salary !== undefined ||
+          updates.annual_leave_quota !== undefined ||
+          updates.sick_leave_quota !== undefined ||
+          updates.casual_leave_quota !== undefined
+        ) {
+          throw new Error('Unauthorized: Employees cannot change their own role, status, salary, or quotas.');
+        }
+      }
+      return this.updateEmployee(targetUserId, updates);
+    }
+    return localCrmStore.updateProfile(requestingUserId, targetUserId, updates);
   },
 
   // Attendance

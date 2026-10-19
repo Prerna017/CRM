@@ -5,7 +5,7 @@ describe('Vingo CRM Service Unit Tests', () => {
   it('retrieves pre-seeded employees list for company', async () => {
     const emps = await crmService.getEmployees();
     expect(emps.length).toBeGreaterThanOrEqual(5);
-    const founder = emps.find((e) => e.role === 'admin');
+    const founder = emps.find((e) => e.role === 'founder_admin' || e.role === 'admin');
     expect(founder).toBeDefined();
     expect(founder?.name).toContain('Prerna Sharma');
   });

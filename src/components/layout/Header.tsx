@@ -22,16 +22,26 @@ export const Header: React.FC<HeaderProps> = ({ mobileOpen, setMobileOpen }) => 
 
   const getPageTitle = () => {
     const path = location.pathname;
-    if (path === '/') return isAdmin ? 'Founder Command Center' : 'Employee Workspace';
-    if (path.startsWith('/leads')) return isAdmin ? 'Sales Lead Pipeline & Deals' : 'My Assigned Leads';
-    if (path.startsWith('/attendance')) return isAdmin ? 'Company Attendance Management' : 'Daily Attendance & Timesheet';
-    if (path.startsWith('/leaves')) return isAdmin ? 'Employee Leave Approvals' : 'My Leave Requests & Balance';
-    if (path.startsWith('/employees')) return isAdmin ? 'Employee Directory & Staff' : 'Company Team Directory';
+    if (path === '/') return isAdmin ? 'Founder / Executive Command Center' : 'My Employee Dashboard';
+    if (path.startsWith('/leads/dead')) return 'Dead & Inactive Leads';
+    if (path.startsWith('/leads/followups')) return 'Scheduled Sales Follow-ups';
+    if (path.startsWith('/leads/my')) return 'My Assigned Sales Opportunities';
+    if (path.startsWith('/leads')) return isAdmin ? 'Sales Lead Pipeline' : 'My Leads';
+    if (path.startsWith('/email/replies')) return 'Inbound Prospect Email Replies';
+    if (path.startsWith('/attendance')) return isAdmin ? 'Company Attendance Management' : 'My Attendance & Clock-in';
+    if (path.startsWith('/leaves/apply')) return 'Apply for Leave';
+    if (path.startsWith('/leaves/history')) return 'My Leave Submissions & History';
+    if (path.startsWith('/leaves')) return isAdmin ? 'Employee Leave Approvals' : 'My Leave Requests';
+    if (path.startsWith('/employees')) return 'Employee Directory & Staff Management';
     if (path.startsWith('/announcements')) return 'Company Announcements & Broadcasts';
     if (path.startsWith('/policies')) return 'Company Policies & Compliance Handbook';
     if (path.startsWith('/holidays')) return 'Corporate Holiday Calendar (2026 - 2027)';
+    if (path.startsWith('/notifications')) return 'System Notifications & Alerts';
     if (path.startsWith('/reports')) return 'Executive Analytics & Performance';
-    return 'Vingo CRM';
+    if (path.startsWith('/activity-logs')) return 'Security Audit & Activity Logs';
+    if (path.startsWith('/settings')) return 'Platform & Role Governance Settings';
+    if (path.startsWith('/profile')) return 'My Employee Profile';
+    return 'Vingo Enterprise CRM';
   };
 
   return (

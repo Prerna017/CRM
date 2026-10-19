@@ -6,17 +6,12 @@ import { formatCurrency, formatDate } from '../lib/utils';
 import {
   Users,
   Clock,
-  Kanban,
   DollarSign,
   CalendarCheck,
-  TrendingUp,
   AlertCircle,
   CheckCircle2,
   ArrowRight,
   Sparkles,
-  PhoneCall,
-  Calendar,
-  Briefcase
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import confetti from 'canvas-confetti';
@@ -102,6 +97,17 @@ export const DashboardPage: React.FC = () => {
   const isClockedOut = Boolean(myRecord && myRecord.clock_out);
 
   const pendingPolicyCount = policies.filter((p) => !p.my_acknowledged_at).length;
+
+  if (loading) {
+    return (
+      <div className="min-h-[400px] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Clock className="h-8 w-8 text-indigo-400 animate-spin" />
+          <span className="text-xs text-muted-foreground animate-pulse">Loading live company records...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">

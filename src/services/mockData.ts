@@ -14,7 +14,7 @@ export const INITIAL_PROFILES: UserProfile[] = [
     id: 'user-founder-001',
     email: 'founder@vingo.com',
     name: 'Prerna Sharma',
-    role: 'admin',
+    role: 'founder_admin',
     title: 'Founder & CEO',
     department: 'Executive',
     phone: '+1 (555) 019-2834',
@@ -99,6 +99,24 @@ export const INITIAL_PROFILES: UserProfile[] = [
     casual_leave_quota: 8,
     created_at: '2024-01-10T09:00:00Z',
     updated_at: '2026-10-19T09:00:00Z',
+  },
+  {
+    id: 'user-deactivated-009',
+    email: 'deactivated@vingo.com',
+    name: 'Marcus Vance',
+    role: 'employee',
+    title: 'Former Operations Executive',
+    department: 'Operations',
+    phone: '+1 (555) 999-0012',
+    avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+    status: 'deactivated',
+    join_date: '2022-04-01',
+    salary: 70000,
+    annual_leave_quota: 0,
+    sick_leave_quota: 0,
+    casual_leave_quota: 0,
+    created_at: '2022-04-01T09:00:00Z',
+    updated_at: '2026-08-01T09:00:00Z',
   }
 ];
 
