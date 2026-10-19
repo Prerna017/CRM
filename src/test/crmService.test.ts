@@ -60,6 +60,7 @@ describe('Vingo CRM Service Unit Tests', () => {
     const app = await crmService.applyLeave({
       user_id: 'user-sales-002',
       leave_type: 'casual',
+      duration_type: 'full_day',
       start_date: '2026-12-01',
       end_date: '2026-12-02',
       days_count: 2,

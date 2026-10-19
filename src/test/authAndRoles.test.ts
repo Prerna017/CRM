@@ -16,6 +16,7 @@ describe('Phase 01: Authentication, Roles, and Governance Test Suite', () => {
     it('blocks employee from provisioning new employee accounts', async () => {
       await expect(
         crmService.provisionEmployee(employeeId, {
+          employee_id: 'EMP-999',
           name: 'Hacker User',
           email: 'hacker@vingo.com',
           role: 'employee',
@@ -23,6 +24,7 @@ describe('Phase 01: Authentication, Roles, and Governance Test Suite', () => {
           department: 'Engineering',
           status: 'active',
           join_date: '2026-10-19',
+          work_location: 'Remote',
           annual_leave_quota: 18,
           sick_leave_quota: 10,
           casual_leave_quota: 8,
@@ -48,6 +50,7 @@ describe('Phase 01: Authentication, Roles, and Governance Test Suite', () => {
 
     it('permits authorized founder_admin to provision and manage employees', async () => {
       const newEmp = await crmService.provisionEmployee(founderAdminId, {
+        employee_id: 'EMP-100',
         name: 'Authorized Onboard',
         email: `onboard-${Date.now()}@vingo.com`,
         role: 'employee',
@@ -55,6 +58,7 @@ describe('Phase 01: Authentication, Roles, and Governance Test Suite', () => {
         department: 'Operations',
         status: 'active',
         join_date: '2026-10-19',
+        work_location: 'Headquarters',
         annual_leave_quota: 18,
         sick_leave_quota: 10,
         casual_leave_quota: 8,

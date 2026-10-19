@@ -9,6 +9,7 @@ import {
   Announcement,
   Policy,
   CompanyHoliday,
+  CompanySettings,
   DashboardStats,
   LeadStage,
   AttendanceStatus
@@ -21,7 +22,8 @@ import {
   INITIAL_LEAVES,
   INITIAL_ANNOUNCEMENTS,
   INITIAL_POLICIES,
-  INITIAL_HOLIDAYS
+  INITIAL_HOLIDAYS,
+  INITIAL_SETTINGS
 } from './mockData';
 
 // Storage Keys for reactive offline/demo persistence
@@ -54,6 +56,7 @@ class LocalCrmStore {
   private policies: Policy[];
   private acknowledgments: { policy_id: string; user_id: string; acknowledged_at: string }[];
   private holidays: CompanyHoliday[];
+  private settings: CompanySettings;
 
   constructor() {
     this.profiles = getStorageItem('profiles', INITIAL_PROFILES);
@@ -70,6 +73,7 @@ class LocalCrmStore {
       { policy_id: 'pol-002', user_id: 'user-sales-002', acknowledged_at: '2026-09-02T11:15:00Z' },
     ]);
     this.holidays = getStorageItem('holidays', INITIAL_HOLIDAYS);
+    this.settings = getStorageItem('settings', INITIAL_SETTINGS);
   }
 
   private persist() {
@@ -82,15 +86,73 @@ class LocalCrmStore {
     setStorageItem('policies', this.policies);
     setStorageItem('acknowledgments', this.acknowledgments);
     setStorageItem('holidays', this.holidays);
+    setStorageItem('settings', this.settings);
+  }
+
+  resetState() {
+    this.profiles = JSON.parse(JSON.stringify(INITIAL_PROFILES));
+    this.leads = JSON.parse(JSON.stringify(INITIAL_LEADS));
+    this.activities = JSON.parse(JSON.stringify(INITIAL_LEAD_ACTIVITIES));
+    this.attendance = JSON.parse(JSON.stringify(INITIAL_ATTENDANCE));
+    this.leaves = JSON.parse(JSON.stringify(INITIAL_LEAVES));
+    this.announcements = JSON.parse(JSON.stringify(INITIAL_ANNOUNCEMENTS));
+    this.policies = JSON.parse(JSON.stringify(INITIAL_POLICIES));
+    this.holidays = JSON.parse(JSON.stringify(INITIAL_HOLIDAYS));
+    this.settings = JSON.parse(JSON.stringify(INITIAL_SETTINGS));
+    this.persist();
   }
 
   // --- Profiles / Employees ---
-  async getEmployees(): Promise<UserProfile[]> {
-    return [...this.profiles];
+  async getEmployees(requestingUserId?: string): Promise<UserProfile[]> {
+    let isCallerAdmin = false;
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+    }
+
+    return this.profiles.map((p) => {
+      const manager = p.reporting_manager_id ? this.profiles.find((m) => m.id === p.reporting_manager_id) : null;
+      const fullProfile: UserProfile = {
+        ...p,
+        reporting_manager: manager ? { ...manager } : null
+      };
+
+      // Mask sensitive personal details for peers
+      if (requestingUserId && !isCallerAdmin && p.id !== requestingUserId) {
+        return {
+          ...fullProfile,
+          salary: undefined,
+          emergency_contact_name: undefined,
+          emergency_contact_phone: undefined
+        };
+      }
+      return fullProfile;
+    });
   }
 
-  async getEmployeeById(id: string): Promise<UserProfile | null> {
-    return this.profiles.find((p) => p.id === id) || null;
+  async getEmployeeById(id: string, requestingUserId?: string): Promise<UserProfile | null> {
+    const p = this.profiles.find((pr) => pr.id === id);
+    if (!p) return null;
+
+    const manager = p.reporting_manager_id ? this.profiles.find((m) => m.id === p.reporting_manager_id) : null;
+    const fullProfile: UserProfile = {
+      ...p,
+      reporting_manager: manager ? { ...manager } : null
+    };
+
+    if (requestingUserId) {
+      const caller = this.profiles.find((pr) => pr.id === requestingUserId);
+      const isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+      if (!isCallerAdmin && p.id !== requestingUserId) {
+        return {
+          ...fullProfile,
+          salary: undefined,
+          emergency_contact_name: undefined,
+          emergency_contact_phone: undefined
+        };
+      }
+    }
+    return fullProfile;
   }
 
   async createEmployee(data: Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>): Promise<UserProfile> {
@@ -183,55 +245,90 @@ class LocalCrmStore {
       if (requestingUserId !== targetUserId) {
         throw new Error('Unauthorized: You can only update your own profile.');
       }
-      if (
-        updates.role !== undefined ||
-        updates.status !== undefined ||
-        updates.salary !== undefined ||
-        updates.annual_leave_quota !== undefined ||
-        updates.sick_leave_quota !== undefined ||
-        updates.casual_leave_quota !== undefined
-      ) {
-        throw new Error('Unauthorized: Employees cannot change their own role, status, salary, or quotas.');
+      const prohibitedFields: (keyof UserProfile)[] = [
+        'role',
+        'status',
+        'salary',
+        'employee_id',
+        'department',
+        'title',
+        'join_date',
+        'reporting_manager_id',
+        'work_location',
+        'annual_leave_quota',
+        'sick_leave_quota',
+        'casual_leave_quota'
+      ];
+      for (const field of prohibitedFields) {
+        if (updates[field] !== undefined) {
+          throw new Error(`Unauthorized: Employees cannot change their own role, status, salary, or quotas (${String(field)}).`);
+        }
       }
     }
     return this.updateEmployee(targetUserId, updates);
   }
 
   // --- Attendance ---
+  private applyMissingCheckoutDerivation() {
+    const today = new Date().toISOString().split('T')[0];
+    for (const record of this.attendance) {
+      if (record.date < today && record.clock_in && !record.clock_out && record.status !== 'missing_checkout') {
+        record.status = 'missing_checkout';
+      }
+    }
+  }
+
   async getTodayAttendance(userId: string): Promise<{ myRecord: AttendanceRecord | null; allToday: AttendanceRecord[] }> {
+    this.applyMissingCheckoutDerivation();
     const today = new Date().toISOString().split('T')[0];
     const myRecord = this.attendance.find((a) => a.user_id === userId && a.date === today) || null;
+
     const allToday = this.profiles
       .filter((p) => p.status === 'active')
       .map((p) => {
         const rec = this.attendance.find((a) => a.user_id === p.id && a.date === today);
-        return rec ? { ...rec, profile: p } : ({
+        if (rec) {
+          return { ...rec, profile: p };
+        }
+        // Check if employee is on approved leave today
+        const hasApprovedLeave = this.leaves.some(
+          (l) => l.user_id === p.id && l.status === 'approved' && l.start_date <= today && l.end_date >= today
+        );
+        return {
           id: 'temp-' + p.id,
           user_id: p.id,
           date: today,
           clock_in: null,
           clock_out: null,
           total_hours: 0,
-          status: 'absent' as AttendanceStatus,
+          status: (hasApprovedLeave ? 'on_leave' : 'absent') as AttendanceStatus,
+          is_late: false,
+          is_early_departure: false,
           created_at: today,
           profile: p
-        });
+        };
       });
     return { myRecord, allToday };
   }
 
   async clockIn(userId: string, notes?: string): Promise<AttendanceRecord> {
     const today = new Date().toISOString().split('T')[0];
-    const now = new Date();
-    const timeNow = now.toTimeString().split(' ')[0]; // HH:MM:SS
-    const [h, m] = timeNow.split(':').map(Number);
-    const isLate = h > 9 || (h === 9 && m > 30);
-    const status: AttendanceStatus = isLate ? 'late' : 'present';
-
     const existingIdx = this.attendance.findIndex((a) => a.user_id === userId && a.date === today);
     if (existingIdx !== -1 && this.attendance[existingIdx].clock_in) {
-      throw new Error('You have already clocked in today.');
+      throw new Error('Duplicate Check-in Error: You have already clocked in today.');
     }
+
+    const now = new Date();
+    const timeNow = now.toTimeString().split(' ')[0]; // HH:MM:SS
+    const [h, m, s] = timeNow.split(':').map(Number);
+    const currentTotalMin = h * 60 + m + (s || 0) / 60;
+
+    // Derived against configured company settings
+    const [startH, startM] = (this.settings.work_start_time || '09:00:00').split(':').map(Number);
+    const startTotalMin = startH * 60 + startM;
+    const lateGraceThresholdMin = startTotalMin + (this.settings.late_threshold_minutes ?? 15);
+    const isLate = currentTotalMin > lateGraceThresholdMin;
+    const status: AttendanceStatus = isLate ? 'late' : 'present';
 
     const newRecord: AttendanceRecord = {
       id: 'att-' + Date.now().toString(36),
@@ -241,6 +338,8 @@ class LocalCrmStore {
       clock_out: null,
       total_hours: 0,
       status,
+      is_late: isLate,
+      is_early_departure: false,
       notes: notes || null,
       created_at: new Date().toISOString(),
       profile: this.profiles.find((p) => p.id === userId)
@@ -259,19 +358,35 @@ class LocalCrmStore {
     const today = new Date().toISOString().split('T')[0];
     const idx = this.attendance.findIndex((a) => a.user_id === userId && a.date === today);
     if (idx === -1 || !this.attendance[idx].clock_in) {
-      throw new Error('You have not clocked in today yet.');
+      throw new Error('Invalid Check-out: You have not clocked in today yet.');
+    }
+    if (this.attendance[idx].clock_out) {
+      throw new Error('Invalid Check-out: You have already clocked out today.');
     }
 
     const timeNow = new Date().toTimeString().split(' ')[0];
     const [inH, inM, inS] = this.attendance[idx].clock_in!.split(':').map(Number);
     const [outH, outM, outS] = timeNow.split(':').map(Number);
-    const diffMinutes = (outH * 60 + outM + outS / 60) - (inH * 60 + inM + inS / 60);
+    const diffMinutes = (outH * 60 + outM + (outS || 0) / 60) - (inH * 60 + inM + (inS || 0) / 60);
     const totalHours = Math.max(0, +(diffMinutes / 60).toFixed(2));
+
+    // Early departure check against company settings
+    const [endH, endM] = (this.settings.work_end_time || '18:00:00').split(':').map(Number);
+    const expectedEndMin = endH * 60 + endM;
+    const outTotalMin = outH * 60 + outM;
+    const isEarlyDeparture = outTotalMin < expectedEndMin;
+
+    let derivedStatus = this.attendance[idx].status;
+    if (totalHours < (this.settings.half_day_hours || 4.5)) {
+      derivedStatus = 'half_day';
+    }
 
     this.attendance[idx] = {
       ...this.attendance[idx],
       clock_out: timeNow,
-      total_hours: totalHours || 4.5,
+      total_hours: totalHours,
+      status: derivedStatus,
+      is_early_departure: isEarlyDeparture,
       notes: notes || this.attendance[idx].notes
     };
     this.persist();
@@ -279,23 +394,80 @@ class LocalCrmStore {
   }
 
   async getMyAttendanceHistory(userId: string): Promise<AttendanceRecord[]> {
+    this.applyMissingCheckoutDerivation();
     return this.attendance.filter((a) => a.user_id === userId);
   }
 
   async getAdminAttendance(): Promise<AttendanceRecord[]> {
+    this.applyMissingCheckoutDerivation();
     return this.attendance.map((a) => ({
       ...a,
-      profile: this.profiles.find((p) => p.id === a.user_id)
+      profile: this.profiles.find((p) => p.id === a.user_id),
+      corrector: a.corrected_by ? this.profiles.find((p) => p.id === a.corrected_by) : undefined
     }));
   }
 
-  async regularizeAttendance(record: Partial<AttendanceRecord> & { user_id: string; date: string }): Promise<AttendanceRecord> {
+  async regularizeAttendance(
+    requestingUserIdOrRecord: string | (Partial<AttendanceRecord> & { user_id: string; date: string }),
+    recordMaybe?: {
+      user_id: string;
+      date: string;
+      clock_in?: string;
+      clock_out?: string;
+      total_hours?: number;
+      status?: AttendanceStatus;
+      correction_reason?: string;
+    }
+  ): Promise<AttendanceRecord> {
+    let requestingUserId: string;
+    let record: {
+      user_id: string;
+      date: string;
+      clock_in?: string | null;
+      clock_out?: string | null;
+      total_hours?: number;
+      status?: AttendanceStatus;
+      correction_reason?: string | null;
+    };
+
+    if (typeof requestingUserIdOrRecord === 'string') {
+      requestingUserId = requestingUserIdOrRecord;
+      record = recordMaybe!;
+    } else {
+      requestingUserId = 'user-founder-001';
+      record = requestingUserIdOrRecord;
+    }
+
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an authorized administrator can regularize attendance records.');
+    }
+    if (record.correction_reason !== undefined && record.correction_reason !== null && !record.correction_reason.trim()) {
+      throw new Error('A valid correction reason is required for attendance regularization audit.');
+    }
+    const reason = record.correction_reason && record.correction_reason.trim()
+      ? record.correction_reason.trim()
+      : 'Administrative attendance regularization';
+
+    let calculatedHours = record.total_hours;
+    if (calculatedHours === undefined && record.clock_in && record.clock_out) {
+      const [inH, inM] = record.clock_in.split(':').map(Number);
+      const [outH, outM] = record.clock_out.split(':').map(Number);
+      const diffMin = (outH * 60 + outM) - (inH * 60 + inM);
+      calculatedHours = Math.max(0, +(diffMin / 60).toFixed(2));
+    }
+
     const idx = this.attendance.findIndex((a) => a.user_id === record.user_id && a.date === record.date);
     if (idx !== -1) {
       this.attendance[idx] = {
         ...this.attendance[idx],
-        ...record,
-        total_hours: record.total_hours || (record.clock_in && record.clock_out ? 8 : 0)
+        clock_in: record.clock_in || this.attendance[idx].clock_in,
+        clock_out: record.clock_out || this.attendance[idx].clock_out,
+        total_hours: calculatedHours !== undefined ? calculatedHours : this.attendance[idx].total_hours,
+        status: record.status || this.attendance[idx].status,
+        correction_reason: reason,
+        corrected_by: requestingUserId,
+        corrected_at: new Date().toISOString()
       };
       this.persist();
       return this.attendance[idx];
@@ -305,10 +477,15 @@ class LocalCrmStore {
         user_id: record.user_id,
         date: record.date,
         clock_in: record.clock_in || '09:00:00',
-        clock_out: record.clock_out || '17:30:00',
-        total_hours: record.total_hours || 8.5,
+        clock_out: record.clock_out || '18:00:00',
+        total_hours: calculatedHours !== undefined ? calculatedHours : 8.0,
         status: record.status || 'present',
-        notes: record.notes || 'Regularized by Founder',
+        is_late: false,
+        is_early_departure: false,
+        notes: 'Regularized via Admin Override',
+        correction_reason: reason,
+        corrected_by: requestingUserId,
+        corrected_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
         profile: this.profiles.find((p) => p.id === record.user_id)
       };
@@ -337,9 +514,39 @@ class LocalCrmStore {
   }
 
   async applyLeave(data: Omit<LeaveRecord, 'id' | 'status' | 'created_at'>): Promise<LeaveRecord> {
+    if (data.start_date > data.end_date) {
+      throw new Error('Invalid Dates: Start date cannot be after end date.');
+    }
+
+    // Check for duplicate / overlapping pending or approved leave requests
+    const overlapping = this.leaves.find(
+      (l) =>
+        l.user_id === data.user_id &&
+        (l.status === 'pending' || l.status === 'approved') &&
+        !(data.end_date < l.start_date || data.start_date > l.end_date)
+    );
+    if (overlapping) {
+      throw new Error(
+        `Leave Overlap Conflict: You already have a ${overlapping.status} leave request from ${overlapping.start_date} to ${overlapping.end_date}.`
+      );
+    }
+
+    let calculatedDays = data.days_count;
+    if (!calculatedDays) {
+      if (data.duration_type === 'half_day') {
+        calculatedDays = 0.5;
+      } else {
+        const start = new Date(data.start_date);
+        const end = new Date(data.end_date);
+        const diffTime = Math.abs(end.getTime() - start.getTime());
+        calculatedDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+
     const newLeave: LeaveRecord = {
       ...data,
       id: 'leave-' + Date.now().toString(36),
+      days_count: calculatedDays,
       status: 'pending',
       created_at: new Date().toISOString(),
       profile: this.profiles.find((p) => p.id === data.user_id)
@@ -349,9 +556,42 @@ class LocalCrmStore {
     return newLeave;
   }
 
-  async reviewLeave(leaveId: string, status: 'approved' | 'rejected', remarks: string, reviewerId: string): Promise<LeaveRecord> {
+  async reviewLeave(
+    leaveId: string,
+    status: 'approved' | 'rejected',
+    remarks: string,
+    reviewerId: string
+  ): Promise<LeaveRecord> {
     const idx = this.leaves.findIndex((l) => l.id === leaveId);
     if (idx === -1) throw new Error('Leave record not found');
+    const leave = this.leaves[idx];
+
+    // CRITICAL SECURITY RULE: Employees and administrators cannot approve their own leave requests
+    if (leave.user_id === reviewerId) {
+      throw new Error('Security Violation: Employees and administrators cannot approve or reject their own leave requests.');
+    }
+
+    const reviewer = this.profiles.find((p) => p.id === reviewerId);
+    if (!reviewer || (reviewer.role !== 'founder_admin' && reviewer.role !== 'admin') || reviewer.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an authorized administrator can review leave requests.');
+    }
+
+    // Deduct leave quotas on approval
+    if (status === 'approved' && leave.status !== 'approved') {
+      const empIdx = this.profiles.findIndex((p) => p.id === leave.user_id);
+      if (empIdx !== -1) {
+        const emp = this.profiles[empIdx];
+        const leaveDays = leave.days_count || 1;
+        if (leave.leave_type === 'annual') {
+          emp.annual_leave_quota = Math.max(0, +(emp.annual_leave_quota - leaveDays).toFixed(1));
+        } else if (leave.leave_type === 'sick') {
+          emp.sick_leave_quota = Math.max(0, +(emp.sick_leave_quota - leaveDays).toFixed(1));
+        } else if (leave.leave_type === 'casual') {
+          emp.casual_leave_quota = Math.max(0, +(emp.casual_leave_quota - leaveDays).toFixed(1));
+        }
+      }
+    }
+
     this.leaves[idx] = {
       ...this.leaves[idx],
       status,
@@ -361,6 +601,57 @@ class LocalCrmStore {
     };
     this.persist();
     return this.leaves[idx];
+  }
+
+  async cancelLeave(leaveId: string, requestingUserId: string): Promise<LeaveRecord> {
+    const idx = this.leaves.findIndex((l) => l.id === leaveId);
+    if (idx === -1) throw new Error('Leave record not found');
+    const leave = this.leaves[idx];
+
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    const isAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+    if (leave.user_id !== requestingUserId && !isAdmin) {
+      throw new Error('Unauthorized: You can only cancel your own leave requests.');
+    }
+
+    // Refund quota if previously approved
+    if (leave.status === 'approved') {
+      const empIdx = this.profiles.findIndex((p) => p.id === leave.user_id);
+      if (empIdx !== -1) {
+        const emp = this.profiles[empIdx];
+        const leaveDays = leave.days_count || 1;
+        if (leave.leave_type === 'annual') {
+          emp.annual_leave_quota += leaveDays;
+        } else if (leave.leave_type === 'sick') {
+          emp.sick_leave_quota += leaveDays;
+        } else if (leave.leave_type === 'casual') {
+          emp.casual_leave_quota += leaveDays;
+        }
+      }
+    }
+
+    this.leaves[idx].status = 'cancelled';
+    this.persist();
+    return this.leaves[idx];
+  }
+
+  // --- Company Settings ---
+  async getSettings(): Promise<CompanySettings> {
+    return { ...this.settings };
+  }
+
+  async updateSettings(requestingUserId: string, updates: Partial<CompanySettings>): Promise<CompanySettings> {
+    const caller = this.profiles.find((p) => p.id === requestingUserId);
+    if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+      throw new Error('Unauthorized: Only an administrator can update company settings.');
+    }
+    this.settings = {
+      ...this.settings,
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+    this.persist();
+    return this.settings;
   }
 
   // --- Leads Pipeline ---
@@ -577,14 +868,23 @@ class LocalCrmStore {
   }
 
   // --- Holidays ---
-  async getHolidays(): Promise<CompanyHoliday[]> {
-    return [...this.holidays].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  async getHolidays(includeArchived: boolean = false): Promise<CompanyHoliday[]> {
+    return [...this.holidays]
+      .filter((h) => includeArchived || !h.is_archived)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }
 
-  async addHoliday(data: Omit<CompanyHoliday, 'id' | 'created_at'>): Promise<CompanyHoliday> {
+  async addHoliday(data: Omit<CompanyHoliday, 'id' | 'created_at'>, requestingUserId?: string): Promise<CompanyHoliday> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an administrator can add company holidays.');
+      }
+    }
     const newHol: CompanyHoliday = {
       ...data,
       id: 'hol-' + Date.now().toString(36),
+      is_archived: data.is_archived || false,
       created_at: new Date().toISOString()
     };
     this.holidays.push(newHol);
@@ -592,9 +892,94 @@ class LocalCrmStore {
     return newHol;
   }
 
-  async deleteHoliday(id: string): Promise<void> {
+  async updateHoliday(id: string, updates: Partial<CompanyHoliday>, requestingUserId?: string): Promise<CompanyHoliday> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an administrator can update company holidays.');
+      }
+    }
+    const idx = this.holidays.findIndex((h) => h.id === id);
+    if (idx === -1) throw new Error('Holiday not found');
+    this.holidays[idx] = {
+      ...this.holidays[idx],
+      ...updates
+    };
+    this.persist();
+    return this.holidays[idx];
+  }
+
+  async archiveHoliday(id: string, requestingUserId?: string): Promise<void> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an administrator can archive company holidays.');
+      }
+    }
+    const idx = this.holidays.findIndex((h) => h.id === id);
+    if (idx !== -1) {
+      this.holidays[idx].is_archived = true;
+      this.persist();
+    }
+  }
+
+  async deleteHoliday(id: string, requestingUserId?: string): Promise<void> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an administrator can delete company holidays.');
+      }
+    }
     this.holidays = this.holidays.filter((h) => h.id !== id);
     this.persist();
+  }
+
+  // --- CSV Export ---
+  exportAttendanceCsv(records?: AttendanceRecord[]): string {
+    const list = records || this.attendance;
+    const headers = [
+      'Date',
+      'Employee ID',
+      'Employee Name',
+      'Department',
+      'Clock In',
+      'Clock Out',
+      'Total Hours',
+      'Status',
+      'Late Arrival',
+      'Early Departure',
+      'Notes',
+      'Correction Reason',
+      'Corrected By'
+    ];
+
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = list.map((r) => {
+      const emp = r.profile || this.profiles.find((p) => p.id === r.user_id);
+      const corrector = r.corrected_by ? this.profiles.find((p) => p.id === r.corrected_by) : null;
+      return [
+        escapeCsv(r.date),
+        escapeCsv(emp?.employee_id || r.user_id),
+        escapeCsv(emp?.name || 'Unknown'),
+        escapeCsv(emp?.department || 'N/A'),
+        escapeCsv(r.clock_in || '--'),
+        escapeCsv(r.clock_out || '--'),
+        escapeCsv(r.total_hours?.toFixed(2) ?? '0.00'),
+        escapeCsv(r.status.toUpperCase()),
+        escapeCsv(r.is_late ? 'YES' : 'NO'),
+        escapeCsv(r.is_early_departure ? 'YES' : 'NO'),
+        escapeCsv(r.notes || ''),
+        escapeCsv(r.correction_reason || ''),
+        escapeCsv(corrector?.name || r.corrected_by || '')
+      ].join(',');
+    });
+
+    return [headers.join(','), ...rows].join('\r\n');
   }
 
   // --- Dashboard Stats ---
@@ -656,22 +1041,47 @@ export const localCrmStore = new LocalCrmStore();
 // Live Supabase Client Service (used when VITE_SUPABASE_URL and KEY are configured)
 export const crmService = {
   // Profiles
-  async getEmployees(): Promise<UserProfile[]> {
+  async getEmployees(requestingUserId?: string): Promise<UserProfile[]> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('profiles').select('*').order('name');
       if (error) throw error;
-      return data || [];
+      let profiles = data || [];
+      if (requestingUserId) {
+        const caller = profiles.find((p) => p.id === requestingUserId);
+        const isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+        if (!isCallerAdmin) {
+          profiles = profiles.map((p) => (p.id !== requestingUserId ? {
+            ...p,
+            salary: undefined,
+            emergency_contact_name: undefined,
+            emergency_contact_phone: undefined
+          } : p));
+        }
+      }
+      return profiles;
     }
-    return localCrmStore.getEmployees();
+    return localCrmStore.getEmployees(requestingUserId);
   },
 
-  async getEmployeeById(id: string): Promise<UserProfile | null> {
+  async getEmployeeById(id: string, requestingUserId?: string): Promise<UserProfile | null> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single();
       if (error) return null;
+      if (requestingUserId && data) {
+        const { data: caller } = await supabase.from('profiles').select('*').eq('id', requestingUserId).single();
+        const isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+        if (!isCallerAdmin && data.id !== requestingUserId) {
+          return {
+            ...data,
+            salary: undefined,
+            emergency_contact_name: undefined,
+            emergency_contact_phone: undefined
+          };
+        }
+      }
       return data;
     }
-    return localCrmStore.getEmployeeById(id);
+    return localCrmStore.getEmployeeById(id, requestingUserId);
   },
 
   async createEmployee(emp: Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>): Promise<UserProfile> {
@@ -748,15 +1158,24 @@ export const crmService = {
         if (requestingUserId !== targetUserId) {
           throw new Error('Unauthorized: You can only update your own profile.');
         }
-        if (
-          updates.role !== undefined ||
-          updates.status !== undefined ||
-          updates.salary !== undefined ||
-          updates.annual_leave_quota !== undefined ||
-          updates.sick_leave_quota !== undefined ||
-          updates.casual_leave_quota !== undefined
-        ) {
-          throw new Error('Unauthorized: Employees cannot change their own role, status, salary, or quotas.');
+        const prohibitedFields: (keyof UserProfile)[] = [
+          'role',
+          'status',
+          'salary',
+          'employee_id',
+          'department',
+          'title',
+          'join_date',
+          'reporting_manager_id',
+          'work_location',
+          'annual_leave_quota',
+          'sick_leave_quota',
+          'casual_leave_quota'
+        ];
+        for (const field of prohibitedFields) {
+          if (updates[field] !== undefined) {
+            throw new Error(`Unauthorized: Employees cannot change their own role, status, salary, or quotas (${String(field)}).`);
+          }
         }
       }
       return this.updateEmployee(targetUserId, updates);
@@ -778,14 +1197,19 @@ export const crmService = {
   async clockIn(userId: string, notes?: string): Promise<AttendanceRecord> {
     if (isSupabaseConfigured) {
       const today = new Date().toISOString().split('T')[0];
+      const existing = await supabase.from('attendance').select('id, clock_in').eq('user_id', userId).eq('date', today).single();
+      if (existing.data?.clock_in) {
+        throw new Error('Duplicate Check-in Error: You have already clocked in today.');
+      }
       const timeNow = new Date().toTimeString().split(' ')[0];
       const [h, m] = timeNow.split(':').map(Number);
-      const isLate = h > 9 || (h === 9 && m > 30);
+      const isLate = h > 9 || (h === 9 && m > 15);
       const { data, error } = await supabase.from('attendance').insert({
         user_id: userId,
         date: today,
         clock_in: timeNow,
         status: isLate ? 'late' : 'present',
+        is_late: isLate,
         notes
       }).select().single();
       if (error) throw error;
@@ -797,6 +1221,13 @@ export const crmService = {
   async clockOut(userId: string, notes?: string): Promise<AttendanceRecord> {
     if (isSupabaseConfigured) {
       const today = new Date().toISOString().split('T')[0];
+      const { data: existing } = await supabase.from('attendance').select('*').eq('user_id', userId).eq('date', today).single();
+      if (!existing || !existing.clock_in) {
+        throw new Error('Invalid Check-out: You have not clocked in today yet.');
+      }
+      if (existing.clock_out) {
+        throw new Error('Invalid Check-out: You have already clocked out today.');
+      }
       const timeNow = new Date().toTimeString().split(' ')[0];
       const { data, error } = await supabase.from('attendance').update({
         clock_out: timeNow,
@@ -826,8 +1257,23 @@ export const crmService = {
     return localCrmStore.getAdminAttendance();
   },
 
-  async regularizeAttendance(rec: Partial<AttendanceRecord> & { user_id: string; date: string }): Promise<AttendanceRecord> {
-    return localCrmStore.regularizeAttendance(rec);
+  async regularizeAttendance(
+    requestingUserIdOrRecord: string | (Partial<AttendanceRecord> & { user_id: string; date: string }),
+    recordMaybe?: {
+      user_id: string;
+      date: string;
+      clock_in?: string;
+      clock_out?: string;
+      total_hours?: number;
+      status?: AttendanceStatus;
+      correction_reason?: string;
+    }
+  ): Promise<AttendanceRecord> {
+    return localCrmStore.regularizeAttendance(requestingUserIdOrRecord as any, recordMaybe);
+  },
+
+  exportAttendanceCsv(records?: AttendanceRecord[]): string {
+    return localCrmStore.exportAttendanceCsv(records);
   },
 
   // Leaves
@@ -860,6 +1306,10 @@ export const crmService = {
 
   async reviewLeave(leaveId: string, status: 'approved' | 'rejected', remarks: string, reviewerId: string): Promise<LeaveRecord> {
     if (isSupabaseConfigured) {
+      const { data: leave } = await supabase.from('leaves').select('*').eq('id', leaveId).single();
+      if (leave && leave.user_id === reviewerId) {
+        throw new Error('Security Violation: Employees and administrators cannot approve or reject their own leave requests.');
+      }
       const { data, error } = await supabase.from('leaves').update({
         status,
         admin_remarks: remarks,
@@ -870,6 +1320,19 @@ export const crmService = {
       return data;
     }
     return localCrmStore.reviewLeave(leaveId, status, remarks, reviewerId);
+  },
+
+  async cancelLeave(leaveId: string, requestingUserId: string): Promise<LeaveRecord> {
+    return localCrmStore.cancelLeave(leaveId, requestingUserId);
+  },
+
+  // Company Settings
+  async getSettings(): Promise<CompanySettings> {
+    return localCrmStore.getSettings();
+  },
+
+  async updateSettings(requestingUserId: string, updates: Partial<CompanySettings>): Promise<CompanySettings> {
+    return localCrmStore.updateSettings(requestingUserId, updates);
   },
 
   // Leads
@@ -1006,35 +1469,61 @@ export const crmService = {
   },
 
   // Holidays
-  async getHolidays(): Promise<CompanyHoliday[]> {
+  async getHolidays(includeArchived: boolean = false): Promise<CompanyHoliday[]> {
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase.from('company_holidays').select('*').order('date', { ascending: true });
+      let query = supabase.from('company_holidays').select('*').order('date', { ascending: true });
+      if (!includeArchived) {
+        query = query.eq('is_archived', false);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return data || [];
     }
-    return localCrmStore.getHolidays();
+    return localCrmStore.getHolidays(includeArchived);
   },
 
-  async addHoliday(hol: Omit<CompanyHoliday, 'id' | 'created_at'>): Promise<CompanyHoliday> {
+  async addHoliday(hol: Omit<CompanyHoliday, 'id' | 'created_at'>, requestingUserId?: string): Promise<CompanyHoliday> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('company_holidays').insert(hol).select().single();
       if (error) throw error;
       return data;
     }
-    return localCrmStore.addHoliday(hol);
+    return localCrmStore.addHoliday(hol, requestingUserId);
   },
 
-  async deleteHoliday(id: string): Promise<void> {
+  async updateHoliday(id: string, updates: Partial<CompanyHoliday>, requestingUserId?: string): Promise<CompanyHoliday> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('company_holidays').update(updates).eq('id', id).select().single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.updateHoliday(id, updates, requestingUserId);
+  },
+
+  async archiveHoliday(id: string, requestingUserId?: string): Promise<void> {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase.from('company_holidays').update({ is_archived: true }).eq('id', id);
+      if (error) throw error;
+      return;
+    }
+    return localCrmStore.archiveHoliday(id, requestingUserId);
+  },
+
+  async deleteHoliday(id: string, requestingUserId?: string): Promise<void> {
     if (isSupabaseConfigured) {
       const { error } = await supabase.from('company_holidays').delete().eq('id', id);
       if (error) throw error;
       return;
     }
-    return localCrmStore.deleteHoliday(id);
+    return localCrmStore.deleteHoliday(id, requestingUserId);
   },
 
   // Dashboard Stats
   async getDashboardStats(): Promise<DashboardStats> {
     return localCrmStore.getDashboardStats();
+  },
+
+  resetState(): void {
+    localCrmStore.resetState();
   }
 };

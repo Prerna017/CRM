@@ -35,6 +35,7 @@ export const ApplyLeavePage: React.FC = () => {
       await crmService.applyLeave({
         user_id: user.id,
         leave_type: leaveType,
+        duration_type: 'full_day',
         start_date: startDate,
         end_date: endDate,
         days_count: Number(daysCount),
