@@ -7,7 +7,14 @@ import {
   Lead,
   LeadActivity,
   Announcement,
+  Notice,
+  NoticePriority,
+  PublicationStatus,
+  NoticeRead,
+  NoticeAcknowledgement,
   Policy,
+  PolicyVersion,
+  PolicyAcknowledgment,
   CompanyHoliday,
   CompanySettings,
   DashboardStats,
@@ -21,7 +28,11 @@ import {
   INITIAL_ATTENDANCE,
   INITIAL_LEAVES,
   INITIAL_ANNOUNCEMENTS,
+  INITIAL_NOTICE_READS,
+  INITIAL_NOTICE_ACKS,
   INITIAL_POLICIES,
+  INITIAL_POLICY_VERSIONS,
+  INITIAL_POLICY_ACKS,
   INITIAL_HOLIDAYS,
   INITIAL_SETTINGS
 } from './mockData';
@@ -53,8 +64,11 @@ class LocalCrmStore {
   private attendance: AttendanceRecord[];
   private leaves: LeaveRecord[];
   private announcements: Announcement[];
+  private noticeReads: NoticeRead[];
+  private noticeAcknowledgements: NoticeAcknowledgement[];
   private policies: Policy[];
-  private acknowledgments: { policy_id: string; user_id: string; acknowledged_at: string }[];
+  private policyVersions: PolicyVersion[];
+  private policyAcknowledgements: PolicyAcknowledgment[];
   private holidays: CompanyHoliday[];
   private settings: CompanySettings;
 
@@ -65,13 +79,11 @@ class LocalCrmStore {
     this.attendance = getStorageItem('attendance', INITIAL_ATTENDANCE);
     this.leaves = getStorageItem('leaves', INITIAL_LEAVES);
     this.announcements = getStorageItem('announcements', INITIAL_ANNOUNCEMENTS);
+    this.noticeReads = getStorageItem('notice_reads', INITIAL_NOTICE_READS);
+    this.noticeAcknowledgements = getStorageItem('notice_acknowledgements', INITIAL_NOTICE_ACKS);
     this.policies = getStorageItem('policies', INITIAL_POLICIES);
-    this.acknowledgments = getStorageItem('acknowledgments', [
-      { policy_id: 'pol-001', user_id: 'user-founder-001', acknowledged_at: '2026-09-01T10:00:00Z' },
-      { policy_id: 'pol-001', user_id: 'user-sales-002', acknowledged_at: '2026-09-02T11:15:00Z' },
-      { policy_id: 'pol-002', user_id: 'user-founder-001', acknowledged_at: '2026-09-01T10:00:00Z' },
-      { policy_id: 'pol-002', user_id: 'user-sales-002', acknowledged_at: '2026-09-02T11:15:00Z' },
-    ]);
+    this.policyVersions = getStorageItem('policy_versions', INITIAL_POLICY_VERSIONS);
+    this.policyAcknowledgements = getStorageItem('policy_acknowledgments', INITIAL_POLICY_ACKS);
     this.holidays = getStorageItem('holidays', INITIAL_HOLIDAYS);
     this.settings = getStorageItem('settings', INITIAL_SETTINGS);
   }
@@ -83,8 +95,11 @@ class LocalCrmStore {
     setStorageItem('attendance', this.attendance);
     setStorageItem('leaves', this.leaves);
     setStorageItem('announcements', this.announcements);
+    setStorageItem('notice_reads', this.noticeReads);
+    setStorageItem('notice_acknowledgements', this.noticeAcknowledgements);
     setStorageItem('policies', this.policies);
-    setStorageItem('acknowledgments', this.acknowledgments);
+    setStorageItem('policy_versions', this.policyVersions);
+    setStorageItem('policy_acknowledgments', this.policyAcknowledgements);
     setStorageItem('holidays', this.holidays);
     setStorageItem('settings', this.settings);
   }
@@ -96,7 +111,11 @@ class LocalCrmStore {
     this.attendance = JSON.parse(JSON.stringify(INITIAL_ATTENDANCE));
     this.leaves = JSON.parse(JSON.stringify(INITIAL_LEAVES));
     this.announcements = JSON.parse(JSON.stringify(INITIAL_ANNOUNCEMENTS));
+    this.noticeReads = JSON.parse(JSON.stringify(INITIAL_NOTICE_READS));
+    this.noticeAcknowledgements = JSON.parse(JSON.stringify(INITIAL_NOTICE_ACKS));
     this.policies = JSON.parse(JSON.stringify(INITIAL_POLICIES));
+    this.policyVersions = JSON.parse(JSON.stringify(INITIAL_POLICY_VERSIONS));
+    this.policyAcknowledgements = JSON.parse(JSON.stringify(INITIAL_POLICY_ACKS));
     this.holidays = JSON.parse(JSON.stringify(INITIAL_HOLIDAYS));
     this.settings = JSON.parse(JSON.stringify(INITIAL_SETTINGS));
     this.persist();
@@ -763,24 +782,240 @@ class LocalCrmStore {
     return newAct;
   }
 
-  // --- Announcements ---
-  async getAnnouncements(): Promise<Announcement[]> {
-    return this.announcements.map((a) => ({
-      ...a,
-      author: this.profiles.find((p) => p.id === a.created_by)
-    }));
+  // --- Announcements / Important Notices ---
+  async getNotices(
+    requestingUserId?: string,
+    options?: { status?: PublicationStatus | 'all'; category?: string; priority?: NoticePriority | 'all'; search?: string }
+  ): Promise<Announcement[]> {
+    let isCallerAdmin = false;
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+    }
+
+    const now = new Date();
+    const activeEmployees = this.profiles.filter((p) => p.status === 'active' && p.role === 'employee');
+
+    let list = this.announcements.filter((n) => {
+      // Access Control Rule: Ordinary employees cannot view drafts or scheduled future notices or archived notices
+      if (!isCallerAdmin) {
+        if (n.status === 'draft') return false;
+        if (n.status === 'archived') return false;
+        // Schedule check: If published_at is in the future, ordinary employees cannot see it yet
+        if (new Date(n.published_at) > now) return false;
+      }
+      return true;
+    });
+
+    if (options?.status && options.status !== 'all') {
+      list = list.filter((n) => n.status === options.status);
+    }
+    if (options?.category && options.category !== 'all') {
+      list = list.filter((n) => n.category.toLowerCase() === options.category?.toLowerCase());
+    }
+    if (options?.priority && options.priority !== 'all') {
+      list = list.filter((n) => n.priority.toLowerCase() === options.priority?.toLowerCase());
+    }
+    if (options?.search) {
+      const q = options.search.toLowerCase();
+      list = list.filter((n) => n.title.toLowerCase().includes(q) || (n.content || n.message || '').toLowerCase().includes(q));
+    }
+
+    return list.map((a) => {
+      const author = this.profiles.find((p) => p.id === a.created_by);
+      const readObj = requestingUserId ? this.noticeReads.find((r) => r.notice_id === a.id && r.user_id === requestingUserId) : null;
+      const ackObj = requestingUserId ? this.noticeAcknowledgements.find((ack) => ack.notice_id === a.id && ack.user_id === requestingUserId) : null;
+      const totalReads = this.noticeReads.filter((r) => r.notice_id === a.id).length;
+      const totalAcks = this.noticeAcknowledgements.filter((ack) => ack.notice_id === a.id).length;
+
+      return {
+        ...a,
+        message: a.message || a.content,
+        content: a.content || a.message || '',
+        author: author ? { ...author } : undefined,
+        creator: author ? { ...author } : undefined,
+        is_read: Boolean(readObj),
+        read_at: readObj?.read_at || null,
+        is_acknowledged: Boolean(ackObj),
+        acknowledged_at: ackObj?.acknowledged_at || null,
+        read_count: totalReads,
+        acknowledged_count: totalAcks,
+        total_employees_count: activeEmployees.length
+      };
+    });
   }
 
-  async createAnnouncement(data: Omit<Announcement, 'id' | 'created_at'>): Promise<Announcement> {
-    const newAnn: Announcement = {
+  async getAnnouncements(requestingUserId?: string): Promise<Announcement[]> {
+    return this.getNotices(requestingUserId);
+  }
+
+  async createAnnouncement(
+    data: Omit<Announcement, 'id' | 'created_at' | 'updated_at'>,
+    requestingUserId?: string
+  ): Promise<Announcement> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can publish or schedule notices.');
+      }
+    }
+
+    const now = new Date().toISOString();
+    const newNotice: Announcement = {
       ...data,
-      id: 'ann-' + Date.now().toString(36),
-      created_at: new Date().toISOString(),
+      id: 'ann-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      content: data.content || data.message || '',
+      message: data.message || data.content || '',
+      status: data.status || 'published',
+      priority: data.priority || 'normal',
+      published_at: data.published_at || now,
+      created_at: now,
+      updated_at: now,
+      expires_at: data.expires_at || null,
+      attachment_url: data.attachment_url || null,
+      requires_acknowledgement: Boolean(data.requires_acknowledgement),
+      is_pinned: Boolean(data.is_pinned),
+      target_department: data.target_department || 'all',
       author: this.profiles.find((p) => p.id === data.created_by)
     };
-    this.announcements.unshift(newAnn);
+
+    this.announcements.unshift(newNotice);
     this.persist();
-    return newAnn;
+    return newNotice;
+  }
+
+  async updateNotice(
+    id: string,
+    updates: Partial<Announcement>,
+    requestingUserId?: string
+  ): Promise<Announcement> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can edit notices.');
+      }
+    }
+
+    const idx = this.announcements.findIndex((n) => n.id === id);
+    if (idx === -1) throw new Error('Notice not found');
+
+    const updated: Announcement = {
+      ...this.announcements[idx],
+      ...updates,
+      content: updates.content || updates.message || this.announcements[idx].content,
+      message: updates.message || updates.content || this.announcements[idx].message,
+      updated_at: new Date().toISOString()
+    };
+
+    this.announcements[idx] = updated;
+    this.persist();
+    return updated;
+  }
+
+  async archiveNotice(id: string, requestingUserId?: string): Promise<Announcement> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only an authorized administrator can archive notices.');
+      }
+    }
+
+    const idx = this.announcements.findIndex((n) => n.id === id);
+    if (idx === -1) throw new Error('Notice not found');
+
+    this.announcements[idx].status = 'archived';
+    this.announcements[idx].updated_at = new Date().toISOString();
+    this.persist();
+    return this.announcements[idx];
+  }
+
+  async scheduleNotice(id: string, publishedAt: string, requestingUserId?: string): Promise<Announcement> {
+    return this.updateNotice(id, { published_at: publishedAt, status: 'published' }, requestingUserId);
+  }
+
+  async markNoticeAsRead(noticeId: string, userId: string): Promise<NoticeRead> {
+    const existing = this.noticeReads.find((r) => r.notice_id === noticeId && r.user_id === userId);
+    if (existing) return existing;
+
+    const newRead: NoticeRead = {
+      id: 'nread-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      notice_id: noticeId,
+      user_id: userId,
+      read_at: new Date().toISOString(),
+      user: this.profiles.find((p) => p.id === userId)
+    };
+    this.noticeReads.push(newRead);
+    this.persist();
+    return newRead;
+  }
+
+  async acknowledgeNotice(noticeId: string, userId: string): Promise<NoticeAcknowledgement> {
+    // Also record read receipt automatically
+    await this.markNoticeAsRead(noticeId, userId);
+
+    const existing = this.noticeAcknowledgements.find((a) => a.notice_id === noticeId && a.user_id === userId);
+    if (existing) return existing;
+
+    const newAck: NoticeAcknowledgement = {
+      id: 'nack-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      notice_id: noticeId,
+      user_id: userId,
+      acknowledged_at: new Date().toISOString(),
+      user: this.profiles.find((p) => p.id === userId)
+    };
+    this.noticeAcknowledgements.push(newAck);
+    this.persist();
+    return newAck;
+  }
+
+  async getNoticeAudit(noticeId: string, requestingUserId?: string) {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin')) {
+        throw new Error('Unauthorized: Only administrators can view notice read and acknowledgment receipts.');
+      }
+    }
+
+    const notice = this.announcements.find((n) => n.id === noticeId);
+    if (!notice) throw new Error('Notice not found');
+
+    const activeEmployees = this.profiles.filter((p) => p.status === 'active' && p.role === 'employee');
+    const reads = this.noticeReads
+      .filter((r) => r.notice_id === noticeId)
+      .map((r) => ({
+        user: this.profiles.find((p) => p.id === r.user_id)!,
+        read_at: r.read_at
+      }))
+      .filter((r) => r.user);
+
+    const acks = this.noticeAcknowledgements
+      .filter((a) => a.notice_id === noticeId)
+      .map((a) => ({
+        user: this.profiles.find((p) => p.id === a.user_id)!,
+        acknowledged_at: a.acknowledged_at
+      }))
+      .filter((a) => a.user);
+
+    const readUserIds = new Set(reads.map((r) => r.user.id));
+    const ackUserIds = new Set(acks.map((a) => a.user.id));
+
+    const pendingEmployees = activeEmployees.filter(
+      (e) => !ackUserIds.has(e.id) && (!readUserIds.has(e.id) || notice.requires_acknowledgement)
+    );
+
+    const totalEligible = activeEmployees.length;
+    const readRate = totalEligible > 0 ? Math.round((reads.length / totalEligible) * 100) : 100;
+    const ackRate = totalEligible > 0 ? Math.round((acks.length / totalEligible) * 100) : 100;
+
+    return {
+      notice,
+      reads,
+      acknowledgements: acks,
+      pendingEmployees,
+      readRate,
+      ackRate,
+      totalEligible
+    };
   }
 
   async togglePinAnnouncement(id: string): Promise<boolean> {
@@ -793,77 +1028,278 @@ class LocalCrmStore {
     return false;
   }
 
-  async deleteAnnouncement(id: string): Promise<void> {
+  async deleteAnnouncement(id: string, requestingUserId?: string): Promise<void> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin')) {
+        throw new Error('Unauthorized: Only administrators can delete notices.');
+      }
+    }
     this.announcements = this.announcements.filter((a) => a.id !== id);
+    this.noticeReads = this.noticeReads.filter((r) => r.notice_id !== id);
+    this.noticeAcknowledgements = this.noticeAcknowledgements.filter((a) => a.notice_id !== id);
     this.persist();
   }
 
-  // --- Policies ---
-  async getPolicies(userId: string): Promise<Policy[]> {
-    return this.policies.map((p) => {
-      const myAck = this.acknowledgments.find((ack) => ack.policy_id === p.id && ack.user_id === userId);
-      const totalAck = this.acknowledgments.filter((ack) => ack.policy_id === p.id).length;
+  // --- Company Policies ---
+  async getPolicies(
+    requestingUserId?: string,
+    options?: { status?: PublicationStatus | 'all'; category?: string; search?: string }
+  ): Promise<Policy[]> {
+    let isCallerAdmin = false;
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      isCallerAdmin = caller?.role === 'founder_admin' || caller?.role === 'admin';
+    }
+
+    let list = this.policies.filter((p) => {
+      // Access Control: Drafts and archived policies are not visible to ordinary employees.
+      if (!isCallerAdmin) {
+        if (p.status === 'draft') return false;
+        if (p.status === 'archived') return false;
+      }
+      return true;
+    });
+
+    if (options?.status && options.status !== 'all') {
+      list = list.filter((p) => p.status === options.status);
+    }
+    if (options?.category && options.category !== 'all') {
+      list = list.filter((p) => p.category.toLowerCase() === options.category?.toLowerCase());
+    }
+    if (options?.search) {
+      const q = options.search.toLowerCase();
+      list = list.filter((p) => p.title.toLowerCase().includes(q) || (p.summary || '').toLowerCase().includes(q));
+    }
+
+    return list.map((p) => {
+      // Acknowledgement must match this specific policy AND its current active version
+      const myAck = requestingUserId
+        ? this.policyAcknowledgements.find(
+            (ack) => ack.policy_id === p.id && ack.version === p.version && ack.user_id === requestingUserId
+          )
+        : null;
+
+      const currentVersionAcks = this.policyAcknowledgements.filter(
+        (ack) => ack.policy_id === p.id && ack.version === p.version
+      ).length;
+
+      const versions = this.policyVersions.filter((v) => v.policy_id === p.id);
+
       return {
         ...p,
         creator: this.profiles.find((pr) => pr.id === p.created_by),
-        acknowledged_count: totalAck,
-        my_acknowledged_at: myAck?.acknowledged_at || null
+        author: this.profiles.find((pr) => pr.id === p.created_by),
+        acknowledged_count: currentVersionAcks,
+        my_acknowledged_at: myAck?.acknowledged_at || null,
+        is_acknowledged: Boolean(myAck),
+        versions
       };
     });
   }
 
-  async acknowledgePolicy(policyId: string, userId: string): Promise<void> {
-    const exists = this.acknowledgments.some((ack) => ack.policy_id === policyId && ack.user_id === userId);
-    if (!exists) {
-      this.acknowledgments.push({
-        policy_id: policyId,
-        user_id: userId,
-        acknowledged_at: new Date().toISOString()
-      });
-      this.persist();
+  async getPolicyById(policyId: string, requestingUserId?: string): Promise<Policy | null> {
+    const policies = await this.getPolicies(requestingUserId, { status: 'all' });
+    const match = policies.find((p) => p.id === policyId);
+    return match || null;
+  }
+
+  async createPolicy(
+    data: Omit<Policy, 'id' | 'created_at' | 'updated_at'>,
+    requestingUserId?: string
+  ): Promise<Policy> {
+    // Access Control: Only authorized administrators can publish or revise official company-wide policies.
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only authorized administrators can publish or revise official company-wide policies.');
+      }
     }
-  }
 
-  async getPolicyCompliance(policyId: string): Promise<{ rate: number; employees: { profile: UserProfile; acknowledged_at: string | null }[] }> {
-    const employees = this.profiles.filter((p) => p.status === 'active').map((p) => {
-      const ack = this.acknowledgments.find((a) => a.policy_id === policyId && a.user_id === p.id);
-      return {
-        profile: p,
-        acknowledged_at: ack?.acknowledged_at || null
-      };
-    });
-    const signedCount = employees.filter((e) => e.acknowledged_at).length;
-    const rate = employees.length > 0 ? Math.round((signedCount / employees.length) * 100) : 100;
-    return { rate, employees };
-  }
-
-  async createPolicy(data: Omit<Policy, 'id' | 'created_at' | 'updated_at'>): Promise<Policy> {
+    const now = new Date().toISOString();
     const newPol: Policy = {
       ...data,
-      id: 'pol-' + Date.now().toString(36),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      id: 'pol-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      version: data.version || '1.0',
+      status: data.status || 'published',
+      effective_date: data.effective_date || now.split('T')[0],
+      created_at: now,
+      updated_at: now
     };
+
     this.policies.push(newPol);
     this.persist();
     return newPol;
   }
 
-  async updatePolicy(id: string, data: Partial<Policy>): Promise<Policy> {
+  async updatePolicy(
+    id: string,
+    updates: Partial<Policy> & { change_summary?: string },
+    requestingUserId?: string
+  ): Promise<Policy> {
+    // Access Control: Only authorized administrators can publish or revise official company-wide policies.
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only authorized administrators can publish or revise official company-wide policies.');
+      }
+    }
+
     const idx = this.policies.findIndex((p) => p.id === id);
     if (idx === -1) throw new Error('Policy not found');
-    this.policies[idx] = {
-      ...this.policies[idx],
-      ...data,
+
+    const current = this.policies[idx];
+
+    // Versioning & Preservation Rule:
+    // If the version number is changing/bumped, preserve the previous version and its history!
+    const isVersionBump = updates.version && updates.version !== current.version;
+    if (isVersionBump) {
+      const snapshot: PolicyVersion = {
+        id: 'pver-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+        policy_id: current.id,
+        version: current.version,
+        title: current.title,
+        category: current.category,
+        summary: current.summary,
+        content: current.content,
+        effective_date: current.effective_date,
+        archived_at: new Date().toISOString(),
+        created_by: requestingUserId || current.created_by,
+        change_summary: updates.change_summary || `Revised to version ${updates.version}`,
+        acknowledged_count: this.policyAcknowledgements.filter(
+          (a) => a.policy_id === current.id && a.version === current.version
+        ).length
+      };
+      this.policyVersions.push(snapshot);
+    }
+
+    const updatedPol: Policy = {
+      ...current,
+      ...updates,
       updated_at: new Date().toISOString()
     };
+
+    this.policies[idx] = updatedPol;
+    this.persist();
+    return updatedPol;
+  }
+
+  async archivePolicy(id: string, requestingUserId?: string): Promise<Policy> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin') || caller.status === 'deactivated') {
+        throw new Error('Unauthorized: Only authorized administrators can archive official company policies.');
+      }
+    }
+
+    const idx = this.policies.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error('Policy not found');
+
+    this.policies[idx].status = 'archived';
+    this.policies[idx].updated_at = new Date().toISOString();
     this.persist();
     return this.policies[idx];
   }
 
-  async deletePolicy(id: string): Promise<void> {
+  async getArchivedPolicies(requestingUserId?: string): Promise<Policy[]> {
+    return this.getPolicies(requestingUserId, { status: 'archived' });
+  }
+
+  async acknowledgePolicy(
+    policyId: string,
+    versionOrUserId: string,
+    maybeUserId?: string
+  ): Promise<PolicyAcknowledgment> {
+    let version: string;
+    let userId: string;
+
+    if (maybeUserId) {
+      version = versionOrUserId;
+      userId = maybeUserId;
+    } else {
+      userId = versionOrUserId;
+      const pol = this.policies.find((p) => p.id === policyId);
+      version = pol?.version || '1.0';
+    }
+
+    const existing = this.policyAcknowledgements.find(
+      (ack) => ack.policy_id === policyId && ack.version === version && ack.user_id === userId
+    );
+    if (existing) return existing;
+
+    const newAck: PolicyAcknowledgment = {
+      id: 'pack-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+      policy_id: policyId,
+      version: version,
+      user_id: userId,
+      acknowledged_at: new Date().toISOString(),
+      user: this.profiles.find((p) => p.id === userId)
+    };
+
+    this.policyAcknowledgements.push(newAck);
+    this.persist();
+    return newAck;
+  }
+
+  async getPolicyVersions(policyId: string): Promise<PolicyVersion[]> {
+    return this.policyVersions
+      .filter((v) => v.policy_id === policyId)
+      .map((v) => ({
+        ...v,
+        creator: this.profiles.find((p) => p.id === v.created_by),
+        acknowledged_count: this.policyAcknowledgements.filter(
+          (a) => a.policy_id === policyId && a.version === v.version
+        ).length
+      }));
+  }
+
+  async getPolicyCompliance(
+    policyId: string,
+    version?: string
+  ): Promise<{
+    rate: number;
+    version: string;
+    totalEligible: number;
+    signedCount: number;
+    employees: { profile: UserProfile; acknowledged_at: string | null; version: string }[];
+  }> {
+    const policy = this.policies.find((p) => p.id === policyId);
+    const targetVersion = version || policy?.version || '1.0';
+
+    const activeEmployees = this.profiles.filter((p) => p.status === 'active' && p.role === 'employee');
+    const employees = activeEmployees.map((p) => {
+      const ack = this.policyAcknowledgements.find(
+        (a) => a.policy_id === policyId && a.version === targetVersion && a.user_id === p.id
+      );
+      return {
+        profile: p,
+        acknowledged_at: ack?.acknowledged_at || null,
+        version: targetVersion
+      };
+    });
+
+    const signedCount = employees.filter((e) => e.acknowledged_at).length;
+    const rate = employees.length > 0 ? Math.round((signedCount / employees.length) * 100) : 100;
+
+    return {
+      rate,
+      version: targetVersion,
+      totalEligible: employees.length,
+      signedCount,
+      employees
+    };
+  }
+
+  async deletePolicy(id: string, requestingUserId?: string): Promise<void> {
+    if (requestingUserId) {
+      const caller = this.profiles.find((p) => p.id === requestingUserId);
+      if (!caller || (caller.role !== 'founder_admin' && caller.role !== 'admin')) {
+        throw new Error('Unauthorized: Only administrators can delete company policies.');
+      }
+    }
     this.policies = this.policies.filter((p) => p.id !== id);
-    this.acknowledgments = this.acknowledgments.filter((a) => a.policy_id !== id);
+    this.policyVersions = this.policyVersions.filter((v) => v.policy_id !== id);
+    this.policyAcknowledgements = this.policyAcknowledgements.filter((a) => a.policy_id !== id);
     this.persist();
   }
 
@@ -1406,66 +1842,151 @@ export const crmService = {
     return localCrmStore.addLeadActivity(act);
   },
 
-  // Announcements
-  async getAnnouncements(): Promise<Announcement[]> {
+  // Announcements & Important Notices
+  async getNotices(
+    requestingUserId?: string,
+    options?: { status?: PublicationStatus | 'all'; category?: string; priority?: NoticePriority | 'all'; search?: string }
+  ): Promise<Announcement[]> {
+    return localCrmStore.getNotices(requestingUserId, options);
+  },
+
+  async getAnnouncements(requestingUserId?: string): Promise<Announcement[]> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('announcements').select('*, author:profiles!created_by(*)').order('is_pinned', { ascending: false }).order('created_at', { ascending: false });
       if (error) throw error;
       return data || [];
     }
-    return localCrmStore.getAnnouncements();
+    return localCrmStore.getNotices(requestingUserId);
   },
 
-  async createAnnouncement(ann: Omit<Announcement, 'id' | 'created_at'>): Promise<Announcement> {
+  async createAnnouncement(
+    ann: Omit<Announcement, 'id' | 'created_at' | 'updated_at'>,
+    requestingUserId?: string
+  ): Promise<Announcement> {
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.from('announcements').insert(ann).select().single();
       if (error) throw error;
       return data;
     }
-    return localCrmStore.createAnnouncement(ann);
+    return localCrmStore.createAnnouncement(ann, requestingUserId);
+  },
+
+  async createNotice(
+    ann: Omit<Announcement, 'id' | 'created_at' | 'updated_at'>,
+    requestingUserId?: string
+  ): Promise<Announcement> {
+    return this.createAnnouncement(ann, requestingUserId);
+  },
+
+  async updateNotice(
+    id: string,
+    updates: Partial<Announcement>,
+    requestingUserId?: string
+  ): Promise<Announcement> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('announcements').update(updates).eq('id', id).select().single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.updateNotice(id, updates, requestingUserId);
+  },
+
+  async archiveNotice(id: string, requestingUserId?: string): Promise<Announcement> {
+    return localCrmStore.archiveNotice(id, requestingUserId);
+  },
+
+  async scheduleNotice(id: string, publishedAt: string, requestingUserId?: string): Promise<Announcement> {
+    return localCrmStore.scheduleNotice(id, publishedAt, requestingUserId);
+  },
+
+  async markNoticeAsRead(noticeId: string, userId: string): Promise<NoticeRead> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('notice_reads').upsert({ notice_id: noticeId, user_id: userId }).select().single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.markNoticeAsRead(noticeId, userId);
+  },
+
+  async acknowledgeNotice(noticeId: string, userId: string): Promise<NoticeAcknowledgement> {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('notice_acknowledgements').upsert({ notice_id: noticeId, user_id: userId }).select().single();
+      if (error) throw error;
+      return data;
+    }
+    return localCrmStore.acknowledgeNotice(noticeId, userId);
+  },
+
+  async getNoticeAudit(noticeId: string, requestingUserId?: string) {
+    return localCrmStore.getNoticeAudit(noticeId, requestingUserId);
   },
 
   async togglePinAnnouncement(id: string): Promise<boolean> {
     return localCrmStore.togglePinAnnouncement(id);
   },
 
-  async deleteAnnouncement(id: string): Promise<void> {
+  async deleteAnnouncement(id: string, requestingUserId?: string): Promise<void> {
     if (isSupabaseConfigured) {
       const { error } = await supabase.from('announcements').delete().eq('id', id);
       if (error) throw error;
       return;
     }
-    return localCrmStore.deleteAnnouncement(id);
+    return localCrmStore.deleteAnnouncement(id, requestingUserId);
   },
 
-  // Policies
-  async getPolicies(userId: string): Promise<Policy[]> {
-    return localCrmStore.getPolicies(userId);
+  // Company Policies
+  async getPolicies(
+    requestingUserId?: string,
+    options?: { status?: PublicationStatus | 'all'; category?: string; search?: string }
+  ): Promise<Policy[]> {
+    return localCrmStore.getPolicies(requestingUserId, options);
   },
 
-  async acknowledgePolicy(policyId: string, userId: string): Promise<void> {
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('policy_acknowledgments').insert({ policy_id: policyId, user_id: userId });
-      if (error) throw error;
-      return;
-    }
-    return localCrmStore.acknowledgePolicy(policyId, userId);
+  async getPolicyById(policyId: string, requestingUserId?: string): Promise<Policy | null> {
+    return localCrmStore.getPolicyById(policyId, requestingUserId);
   },
 
-  async getPolicyCompliance(policyId: string) {
-    return localCrmStore.getPolicyCompliance(policyId);
+  async acknowledgePolicy(
+    policyId: string,
+    versionOrUserId: string,
+    maybeUserId?: string
+  ): Promise<PolicyAcknowledgment> {
+    return localCrmStore.acknowledgePolicy(policyId, versionOrUserId, maybeUserId);
   },
 
-  async createPolicy(pol: Omit<Policy, 'id' | 'created_at' | 'updated_at'>): Promise<Policy> {
-    return localCrmStore.createPolicy(pol);
+  async getPolicyCompliance(policyId: string, version?: string) {
+    return localCrmStore.getPolicyCompliance(policyId, version);
   },
 
-  async updatePolicy(id: string, updates: Partial<Policy>): Promise<Policy> {
-    return localCrmStore.updatePolicy(id, updates);
+  async getPolicyVersions(policyId: string): Promise<PolicyVersion[]> {
+    return localCrmStore.getPolicyVersions(policyId);
   },
 
-  async deletePolicy(id: string): Promise<void> {
-    return localCrmStore.deletePolicy(id);
+  async getArchivedPolicies(requestingUserId?: string): Promise<Policy[]> {
+    return localCrmStore.getArchivedPolicies(requestingUserId);
+  },
+
+  async createPolicy(
+    pol: Omit<Policy, 'id' | 'created_at' | 'updated_at'>,
+    requestingUserId?: string
+  ): Promise<Policy> {
+    return localCrmStore.createPolicy(pol, requestingUserId);
+  },
+
+  async updatePolicy(
+    id: string,
+    updates: Partial<Policy> & { change_summary?: string },
+    requestingUserId?: string
+  ): Promise<Policy> {
+    return localCrmStore.updatePolicy(id, updates, requestingUserId);
+  },
+
+  async archivePolicy(id: string, requestingUserId?: string): Promise<Policy> {
+    return localCrmStore.archivePolicy(id, requestingUserId);
+  },
+
+  async deletePolicy(id: string, requestingUserId?: string): Promise<void> {
+    return localCrmStore.deletePolicy(id, requestingUserId);
   },
 
   // Holidays

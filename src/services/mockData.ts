@@ -5,7 +5,11 @@ import {
   Lead,
   LeadActivity,
   Announcement,
+  NoticeRead,
+  NoticeAcknowledgement,
   Policy,
+  PolicyVersion,
+  PolicyAcknowledgment,
   CompanyHoliday,
   CompanySettings
 } from '../types/database';
@@ -422,55 +426,158 @@ export const INITIAL_ANNOUNCEMENTS: Announcement[] = [
     id: 'ann-001',
     title: '🚀 Q4 Strategic Goals & $1.5M ARR Milestone All-Hands',
     content: 'Join us this Friday at 4 PM EST for our company all-hands. We will celebrate crossing our revenue targets, preview product roadmap releases, and unveil our enterprise expansion roadmap!',
+    message: 'Join us this Friday at 4 PM EST for our company all-hands. We will celebrate crossing our revenue targets, preview product roadmap releases, and unveil our enterprise expansion roadmap!',
     category: 'celebration',
     priority: 'important',
+    status: 'published',
+    published_at: '2026-10-18T09:00:00Z',
+    expires_at: '2026-11-30T23:59:59Z',
     is_pinned: true,
     target_department: 'all',
+    attachment_url: 'https://documents.vingo.com/allhands-q4-presentation.pdf',
+    requires_acknowledgement: false,
     created_by: 'user-founder-001',
     created_at: '2026-10-18T09:00:00Z',
+    updated_at: '2026-10-18T09:00:00Z',
   },
   {
     id: 'ann-002',
     title: '📢 Updated Health Insurance & Wellness Reimbursement Program',
     content: 'Effective November 1st, our corporate medical insurance covers vision, dental, psychological wellness, and a $60 monthly fitness allowance. Check your email for enrollment instructions.',
+    message: 'Effective November 1st, our corporate medical insurance covers vision, dental, psychological wellness, and a $60 monthly fitness allowance. Check your email for enrollment instructions.',
     category: 'policy',
     priority: 'important',
+    status: 'published',
+    published_at: '2026-10-15T14:30:00Z',
+    expires_at: null,
     is_pinned: true,
     target_department: 'all',
+    attachment_url: 'https://documents.vingo.com/health-benefits-guide-2026.pdf',
+    requires_acknowledgement: true,
     created_by: 'user-founder-001',
     created_at: '2026-10-15T14:30:00Z',
+    updated_at: '2026-10-15T14:30:00Z',
   },
   {
     id: 'ann-003',
     title: '🎯 Sales Team Incentive & Deal Accelerator Boost',
     content: 'Congratulations to Alex Morgan on securing the Nordic Retail Group partnership! A 15% accelerator commission bonus is now unlocked for all contracts finalized before Thanksgiving.',
+    message: 'Congratulations to Alex Morgan on securing the Nordic Retail Group partnership! A 15% accelerator commission bonus is now unlocked for all contracts finalized before Thanksgiving.',
     category: 'celebration',
     priority: 'normal',
+    status: 'published',
+    published_at: '2026-10-12T16:00:00Z',
+    expires_at: '2026-11-20T23:59:59Z',
     is_pinned: false,
     target_department: 'sales',
+    attachment_url: null,
+    requires_acknowledgement: false,
     created_by: 'user-founder-001',
     created_at: '2026-10-12T16:00:00Z',
+    updated_at: '2026-10-12T16:00:00Z',
   },
   {
     id: 'ann-004',
     title: '🛠️ Scheduled Database Infrastructure Maintenance',
     content: 'Our cloud PostgreSQL replica will undergo scheduled index reindexing this Sunday between 02:00 AM and 03:00 AM UTC. Expected downtime is under 5 minutes.',
+    message: 'Our cloud PostgreSQL replica will undergo scheduled index reindexing this Sunday between 02:00 AM and 03:00 AM UTC. Expected downtime is under 5 minutes.',
     category: 'urgent',
     priority: 'urgent',
+    status: 'published',
+    published_at: '2026-10-17T12:00:00Z',
+    expires_at: '2026-10-25T00:00:00Z',
     is_pinned: false,
     target_department: 'engineering',
+    attachment_url: null,
+    requires_acknowledgement: true,
     created_by: 'user-founder-001',
     created_at: '2026-10-17T12:00:00Z',
+    updated_at: '2026-10-17T12:00:00Z',
+  },
+  {
+    id: 'ann-draft-001',
+    title: '📝 [DRAFT] Annual Compensation Review & Performance Bonus Pool',
+    content: 'Founder notes on preliminary compensation band adjustments for executive and staff levels ahead of Q1 2027 budgeting. Confidential draft under executive review.',
+    message: 'Founder notes on preliminary compensation band adjustments for executive and staff levels ahead of Q1 2027 budgeting. Confidential draft under executive review.',
+    category: 'general',
+    priority: 'important',
+    status: 'draft',
+    published_at: '2026-10-19T10:00:00Z',
+    expires_at: null,
+    is_pinned: false,
+    target_department: 'Executive',
+    attachment_url: null,
+    requires_acknowledgement: false,
+    created_by: 'user-founder-001',
+    created_at: '2026-10-19T10:00:00Z',
+    updated_at: '2026-10-19T10:00:00Z',
+  },
+  {
+    id: 'ann-scheduled-001',
+    title: '🗓️ [SCHEDULED] Thanksgiving Office Holiday Schedule & Standby Support',
+    content: 'Notice regarding office closure for Thanksgiving holiday Nov 26-27 and rotating emergency engineering on-call rosters.',
+    message: 'Notice regarding office closure for Thanksgiving holiday Nov 26-27 and rotating emergency engineering on-call rosters.',
+    category: 'general',
+    priority: 'normal',
+    status: 'published',
+    published_at: '2026-11-15T09:00:00Z', // Future scheduled publication timestamp
+    expires_at: '2026-12-01T00:00:00Z',
+    is_pinned: false,
+    target_department: 'all',
+    attachment_url: null,
+    requires_acknowledgement: false,
+    created_by: 'user-founder-001',
+    created_at: '2026-10-19T11:00:00Z',
+    updated_at: '2026-10-19T11:00:00Z',
+  },
+  {
+    id: 'ann-archived-001',
+    title: '📦 [ARCHIVED] Previous Office Relocation Logistics Protocol',
+    content: 'Past operational instructions regarding the office expansion move completed in 2024.',
+    message: 'Past operational instructions regarding the office expansion move completed in 2024.',
+    category: 'general',
+    priority: 'normal',
+    status: 'archived',
+    published_at: '2024-05-01T08:00:00Z',
+    expires_at: '2024-06-01T00:00:00Z',
+    is_pinned: false,
+    target_department: 'all',
+    attachment_url: null,
+    requires_acknowledgement: false,
+    created_by: 'user-founder-001',
+    created_at: '2024-05-01T08:00:00Z',
+    updated_at: '2024-06-02T00:00:00Z',
   }
+];
+
+export const INITIAL_NOTICE_READS: NoticeRead[] = [
+  { id: 'nread-001', notice_id: 'ann-001', user_id: 'user-sales-002', read_at: '2026-10-18T10:15:00Z' },
+  { id: 'nread-002', notice_id: 'ann-001', user_id: 'user-eng-003', read_at: '2026-10-18T11:30:00Z' },
+  { id: 'nread-003', notice_id: 'ann-001', user_id: 'user-mkt-004', read_at: '2026-10-18T12:00:00Z' },
+  { id: 'nread-004', notice_id: 'ann-002', user_id: 'user-sales-002', read_at: '2026-10-15T15:00:00Z' },
+  { id: 'nread-005', notice_id: 'ann-002', user_id: 'user-eng-003', read_at: '2026-10-15T15:30:00Z' },
+  { id: 'nread-006', notice_id: 'ann-004', user_id: 'user-eng-003', read_at: '2026-10-17T12:15:00Z' },
+  { id: 'nread-007', notice_id: 'ann-001', user_id: 'user-founder-001', read_at: '2026-10-18T09:05:00Z' },
+  { id: 'nread-008', notice_id: 'ann-002', user_id: 'user-founder-001', read_at: '2026-10-15T14:35:00Z' },
+  { id: 'nread-009', notice_id: 'ann-003', user_id: 'user-founder-001', read_at: '2026-10-12T16:05:00Z' },
+  { id: 'nread-010', notice_id: 'ann-004', user_id: 'user-founder-001', read_at: '2026-10-17T12:05:00Z' },
+];
+
+export const INITIAL_NOTICE_ACKS: NoticeAcknowledgement[] = [
+  { id: 'nack-001', notice_id: 'ann-002', user_id: 'user-sales-002', acknowledged_at: '2026-10-15T15:05:00Z' },
+  { id: 'nack-002', notice_id: 'ann-002', user_id: 'user-founder-001', acknowledged_at: '2026-10-15T14:40:00Z' },
+  { id: 'nack-003', notice_id: 'ann-004', user_id: 'user-eng-003', acknowledged_at: '2026-10-17T12:20:00Z' },
+  { id: 'nack-004', notice_id: 'ann-004', user_id: 'user-founder-001', acknowledged_at: '2026-10-17T12:10:00Z' },
 ];
 
 export const INITIAL_POLICIES: Policy[] = [
   {
     id: 'pol-001',
     title: 'Company Code of Ethics & Professional Conduct',
-    category: 'Code of Conduct',
+    category: 'Employee conduct',
     version: '2.1',
     effective_date: '2026-01-01',
+    status: 'published',
     summary: 'Outlines standard ethical practices, zero-tolerance for harassment, mutual respect, and client data confidentiality.',
     content: `### 1. Purpose & Standards
 At Vingo, our credibility is anchored in absolute trust, technological excellence, and moral integrity. Every team member is expected to uphold the highest standard of ethical conduct in all internal collaborations and external client partnerships.
@@ -490,9 +597,10 @@ Reports of ethical or compliance violations are handled with strict anonymity an
   {
     id: 'pol-002',
     title: 'Remote & Hybrid Workplace Collaboration Standards',
-    category: 'Remote Work',
+    category: 'Work from home',
     version: '1.4',
     effective_date: '2026-03-15',
+    status: 'published',
     summary: 'Guidelines for core working hours, home office cybersecurity, synchronous communication, and hardware stipend.',
     content: `### 1. Core Synchronous Hours
 Team members are required to be available on Slack and email during core collaborative hours: 10:00 AM to 4:00 PM local time.
@@ -511,9 +619,10 @@ Team members are required to be available on Slack and email during core collabo
   {
     id: 'pol-003',
     title: 'Information Security & Data Protection Policy',
-    category: 'Security & IT',
+    category: 'Data security',
     version: '3.0',
     effective_date: '2026-06-01',
+    status: 'published',
     summary: 'Mandatory protocols for customer data handling, multi-factor authentication, incident reporting, and access keys.',
     content: `### 1. Mandatory Multi-Factor Authentication (MFA)
 MFA is strictly required for Google Workspace, GitHub, Supabase, and our CRM platform.
@@ -531,9 +640,10 @@ Any suspected breach or lost work device must be reported to security@vingo.com 
   {
     id: 'pol-004',
     title: 'Paid Leave, Attendance & Absence Guidelines',
-    category: 'Leave & Attendance',
+    category: 'Leave and holidays',
     version: '2.0',
     effective_date: '2026-01-01',
+    status: 'published',
     summary: 'Details annual leave allocations, vacation notice periods, medical sick certification, and daily clock-in rules.',
     content: `### 1. Annual Leave Entitlements
 Full-time permanent employees receive:
@@ -550,7 +660,228 @@ Daily clock-in through the portal is required to maintain accurate timesheets, t
     created_by: 'user-founder-001',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'pol-005',
+    title: 'CRM Data Governance & Customer Lead Ownership Protocol',
+    category: 'CRM and lead ownership',
+    version: '1.0',
+    effective_date: '2026-04-01',
+    status: 'published',
+    summary: 'Defines clear rules for inbound lead assignment, territory ownership, 48-hour follow-up SLA, and deal registration.',
+    content: `### 1. Lead Ownership Principles
+All prospective accounts created or discovered during corporate employment belong exclusively to Vingo Technologies. Lead routing is automated based on territory and vertical.
+
+### 2. Follow-Up SLA
+Assigned sales executives must execute first outreach within 48 business hours or the lead automatically re-queues.
+
+### 3. Deal Registration & Protection
+Deals registered in the CRM remain protected for 90 days with active stage updates and logged communications.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-04-01T00:00:00Z',
+    updated_at: '2026-04-01T00:00:00Z',
+  },
+  {
+    id: 'pol-006',
+    title: 'Non-Disclosure, Intellectual Property & Confidentiality Agreement',
+    category: 'Confidentiality',
+    version: '1.0',
+    effective_date: '2026-02-01',
+    status: 'published',
+    summary: 'Standard obligations for safeguarding proprietary algorithms, customer lists, and non-public business strategies.',
+    content: `### 1. Confidential Information Scope
+Includes source code, customer records, pricing agreements, financial forecasts, and internal documentation.
+
+### 2. Intellectual Property Assignment
+All software, inventions, and methodologies created during working hours or using company equipment are the sole property of Vingo.
+
+### 3. Post-Employment Duration
+Confidentiality duties survive separation of employment for a minimum of 3 years.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-02-01T00:00:00Z',
+    updated_at: '2026-02-01T00:00:00Z',
+  },
+  {
+    id: 'pol-007',
+    title: 'Corporate Communication, Social Media & Public Representation',
+    category: 'Communication',
+    version: '1.0',
+    effective_date: '2026-05-01',
+    status: 'published',
+    summary: 'Protocols for official company messaging, press inquiries, and public social media references.',
+    content: `### 1. Authorized Spokespersons
+Only designated executive directors may deliver formal public statements on behalf of Vingo Technologies.
+
+### 2. Social Media Disclaimers
+Personal social posts discussing industry trends must state: "Views expressed are solely my own." No internal company screenshots or client details may be shared.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-05-01T00:00:00Z',
+    updated_at: '2026-05-01T00:00:00Z',
+  },
+  {
+    id: 'pol-008',
+    title: 'Standard Working Hours, Core Times & Overtime Regulations',
+    category: 'Working hours',
+    version: '1.0',
+    effective_date: '2026-01-01',
+    status: 'published',
+    summary: 'Specifies 40-hour work week, 09:00 - 18:00 window, core collaboration bands, and overtime compensation rules.',
+    content: `### 1. Standard Schedule
+Standard business hours run Monday to Friday, 9:00 AM to 6:00 PM local time with a 1-hour midday break.
+
+### 2. Flexible Scheduling
+Flexible arrival is permissible between 8:30 AM and 10:00 AM upon written manager agreement, ensuring core hours (10:00 AM - 4:00 PM) are fully covered.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'pol-009',
+    title: 'Biometric & Portal Attendance Recording Guidelines',
+    category: 'Attendance',
+    version: '1.0',
+    effective_date: '2026-01-01',
+    status: 'published',
+    summary: 'Rules for daily check-in, check-out timesheet compliance, and missed punch correction requests.',
+    content: `### 1. Daily Clocking
+Employees are required to clock in upon start of work and clock out upon departure via the Employee Portal or office terminal.
+
+### 2. Missed Punches
+Corrections must be filed within 48 hours accompanied by manager verification. Repeated failure to record punches may impact attendance bonuses.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'pol-draft-001',
+    title: 'Enterprise AI Usage & Large Language Model Policy (Draft)',
+    category: 'Data security',
+    version: '0.9',
+    effective_date: '2026-12-01',
+    status: 'draft',
+    summary: 'Draft governance on enterprise LLM subscriptions, confidential prompt masking, and copyright safety.',
+    content: `### 1. Approved AI Tools
+Only enterprise-licensed LLM instances with zero-retention data clauses are authorized for development assistance.
+
+### 2. Data Masking
+Personally identifiable information and secret production keys must never be submitted into model prompt contexts.`,
+    created_by: 'user-founder-001',
+    created_at: '2026-10-18T10:00:00Z',
+    updated_at: '2026-10-18T10:00:00Z',
+  },
+  {
+    id: 'pol-archived-001',
+    title: '2024 Legacy Travel & Domestic Expense Reimbursement Policy',
+    category: 'Employee conduct',
+    version: '1.0',
+    effective_date: '2024-01-01',
+    status: 'archived',
+    summary: 'Superseded legacy travel guidelines replaced by the 2026 corporate card management system.',
+    content: `### Archived Policy Notice
+This policy has been archived and superseded by the 2026 Automated Card Expense System. Retained solely for regulatory audit compliance and statutory record retention.`,
+    created_by: 'user-founder-001',
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2025-12-31T23:59:59Z',
   }
+];
+
+export const INITIAL_POLICY_VERSIONS: PolicyVersion[] = [
+  {
+    id: 'pver-001',
+    policy_id: 'pol-001',
+    version: '1.0',
+    title: 'Company Code of Ethics',
+    category: 'Employee conduct',
+    summary: 'Initial code of conduct published at company incorporation.',
+    content: 'Initial ethics code v1.0 covering core baseline workplace behavior.',
+    effective_date: '2023-01-15',
+    archived_at: '2025-01-01T00:00:00Z',
+    created_by: 'user-founder-001',
+    change_summary: 'Initial company-wide charter publication.',
+    acknowledged_count: 3
+  },
+  {
+    id: 'pver-002',
+    policy_id: 'pol-001',
+    version: '2.0',
+    title: 'Company Code of Ethics & Professional Conduct',
+    category: 'Employee conduct',
+    summary: 'Expanded ethical standards and conflict of interest guidelines.',
+    content: 'Updated ethics code v2.0 with expanded conflict of interest definitions.',
+    effective_date: '2025-01-01',
+    archived_at: '2026-01-01T00:00:00Z',
+    created_by: 'user-founder-001',
+    change_summary: 'Added explicit whistleblower protections and anti-retaliation clauses.',
+    acknowledged_count: 3
+  },
+  {
+    id: 'pver-003',
+    policy_id: 'pol-003',
+    version: '1.0',
+    title: 'IT Security Policy',
+    category: 'Data security',
+    summary: 'Basic password standards and email hygiene.',
+    content: 'Basic IT standards v1.0.',
+    effective_date: '2023-06-01',
+    archived_at: '2024-06-01T00:00:00Z',
+    created_by: 'user-founder-001',
+    change_summary: 'Initial security rules.',
+    acknowledged_count: 2
+  },
+  {
+    id: 'pver-004',
+    policy_id: 'pol-003',
+    version: '2.0',
+    title: 'Information Security & Device Management Policy',
+    category: 'Data security',
+    summary: 'Introduced device encryption and remote wiping protocols.',
+    content: 'Security v2.0 introducing mandatory mobile device management.',
+    effective_date: '2024-06-01',
+    archived_at: '2026-06-01T00:00:00Z',
+    created_by: 'user-founder-001',
+    change_summary: 'Mandatory disk encryption and remote wipe permissions.',
+    acknowledged_count: 3
+  },
+  {
+    id: 'pver-005',
+    policy_id: 'pol-004',
+    version: '1.0',
+    title: 'Employee Leave Policy',
+    category: 'Leave and holidays',
+    summary: 'Original 15-day vacation leave allocation.',
+    content: 'Original leave allocations v1.0.',
+    effective_date: '2023-01-15',
+    archived_at: '2026-01-01T00:00:00Z',
+    created_by: 'user-founder-001',
+    change_summary: 'Initial leave policy before annual quota expansion to 18 days.',
+    acknowledged_count: 2
+  }
+];
+
+export const INITIAL_POLICY_ACKS: PolicyAcknowledgment[] = [
+  // pol-001 historical acknowledgments for version 2.0
+  { id: 'pack-001', policy_id: 'pol-001', version: '2.0', user_id: 'user-sales-002', acknowledged_at: '2025-01-10T09:00:00Z' },
+  { id: 'pack-002', policy_id: 'pol-001', version: '2.0', user_id: 'user-eng-003', acknowledged_at: '2025-01-12T14:20:00Z' },
+  { id: 'pack-003', policy_id: 'pol-001', version: '2.0', user_id: 'user-founder-001', acknowledged_at: '2025-01-02T10:00:00Z' },
+  // pol-001 current acknowledgments for version 2.1 (Sarah Jenkins user-eng-003 has not acknowledged 2.1 yet!)
+  { id: 'pack-004', policy_id: 'pol-001', version: '2.1', user_id: 'user-sales-002', acknowledged_at: '2026-01-05T10:00:00Z' },
+  { id: 'pack-005', policy_id: 'pol-001', version: '2.1', user_id: 'user-founder-001', acknowledged_at: '2026-01-02T11:00:00Z' },
+  { id: 'pack-006', policy_id: 'pol-001', version: '2.1', user_id: 'user-mkt-004', acknowledged_at: '2026-01-10T08:30:00Z' },
+
+  // pol-002 acknowledgments for version 1.4
+  { id: 'pack-007', policy_id: 'pol-002', version: '1.4', user_id: 'user-sales-002', acknowledged_at: '2026-03-20T10:00:00Z' },
+  { id: 'pack-008', policy_id: 'pol-002', version: '1.4', user_id: 'user-eng-003', acknowledged_at: '2026-03-21T09:30:00Z' },
+  { id: 'pack-009', policy_id: 'pol-002', version: '1.4', user_id: 'user-founder-001', acknowledged_at: '2026-03-15T11:00:00Z' },
+
+  // pol-003 acknowledgments for version 3.0
+  { id: 'pack-010', policy_id: 'pol-003', version: '3.0', user_id: 'user-founder-001', acknowledged_at: '2026-06-05T09:00:00Z' },
+  { id: 'pack-011', policy_id: 'pol-003', version: '3.0', user_id: 'user-eng-003', acknowledged_at: '2026-06-08T15:00:00Z' },
+  { id: 'pack-012', policy_id: 'pol-003', version: '3.0', user_id: 'user-sales-002', acknowledged_at: '2026-06-10T11:20:00Z' },
+
+  // pol-004 acknowledgments for version 2.0
+  { id: 'pack-013', policy_id: 'pol-004', version: '2.0', user_id: 'user-sales-002', acknowledged_at: '2026-01-15T08:45:00Z' },
+  { id: 'pack-014', policy_id: 'pol-004', version: '2.0', user_id: 'user-eng-003', acknowledged_at: '2026-01-16T12:00:00Z' },
+  { id: 'pack-015', policy_id: 'pol-004', version: '2.0', user_id: 'user-founder-001', acknowledged_at: '2026-01-01T10:00:00Z' },
 ];
 
 export const INITIAL_HOLIDAYS: CompanyHoliday[] = [

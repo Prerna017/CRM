@@ -134,19 +134,53 @@ export interface LeadActivity {
   user?: UserProfile;
 }
 
+export type NoticePriority = 'normal' | 'important' | 'urgent' | 'low' | 'high';
+export type PublicationStatus = 'published' | 'draft' | 'archived';
+
 export interface Announcement {
   id: string;
   title: string;
-  content: string;
+  content: string; // also aliased as message
+  message?: string;
   category: string;
-  priority: 'low' | 'normal' | 'high' | 'urgent' | 'important';
-  is_pinned: boolean;
-  target_department: string;
+  priority: NoticePriority;
+  status: PublicationStatus;
+  published_at: string;
+  is_pinned?: boolean;
+  target_department?: string;
   created_by: string;
   created_at: string;
+  updated_at?: string;
   expires_at?: string | null;
+  attachment_url?: string | null;
+  requires_acknowledgement?: boolean;
   creator?: UserProfile;
   author?: UserProfile;
+  is_read?: boolean;
+  read_at?: string | null;
+  is_acknowledged?: boolean;
+  acknowledged_at?: string | null;
+  read_count?: number;
+  acknowledged_count?: number;
+  total_employees_count?: number;
+}
+
+export type Notice = Announcement;
+
+export interface NoticeRead {
+  id: string;
+  notice_id: string;
+  user_id: string;
+  read_at: string;
+  user?: UserProfile;
+}
+
+export interface NoticeAcknowledgement {
+  id: string;
+  notice_id: string;
+  user_id: string;
+  acknowledged_at: string;
+  user?: UserProfile;
 }
 
 export interface Policy {
@@ -158,17 +192,39 @@ export interface Policy {
   summary?: string;
   content: string;
   file_url?: string;
+  attachment_url?: string | null;
+  status: PublicationStatus;
   created_by: string;
   created_at: string;
   updated_at: string;
   creator?: UserProfile;
+  author?: UserProfile;
   acknowledged_count?: number;
   my_acknowledged_at?: string | null;
+  is_acknowledged?: boolean;
+  versions?: PolicyVersion[];
+}
+
+export interface PolicyVersion {
+  id: string;
+  policy_id: string;
+  version: string;
+  title: string;
+  category: string;
+  summary?: string;
+  content: string;
+  effective_date: string;
+  archived_at: string;
+  created_by: string;
+  change_summary?: string | null;
+  creator?: UserProfile;
+  acknowledged_count?: number;
 }
 
 export interface PolicyAcknowledgment {
   id: string;
   policy_id: string;
+  version: string;
   user_id: string;
   acknowledged_at: string;
   user?: UserProfile;
